@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kimchou-ict",
+  "account_id": "77fa8828b4edb71086e716e10532ae55",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-12",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./static",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*",
+      "/uploads/*",
+      "/favicon.ico"
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "UPLOADS",
+      "bucket_name": "jdcou-up"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "JD ANALYSIS",
+    "GEMINI_MODEL": "gemini-3.6-flash",
+    "DEEPSEEK_VISION_MODEL": "deepseek-flash",
+    "DEEPSEEK_CHAT_MODEL": "deepseek-flash",
+    "MAX_UPLOAD_MB": "12",
+    "CONFIDENCE_MINIMUM": "65",
+    "PRICE_AGREEMENT_ABSOLUTE": "0.50",
+    "ATR_AGREEMENT_PERCENT": "0.20",
+    "FORCE_SIGNAL": "true",
+    "TWELVEDATA_SYMBOL": "XAU/USD",
+    "ICT_MIN_SCORE": "60",
+    "ICT_AI_LANGUAGE": "Khmer",
+    "NEWS_BLACKOUT_BEFORE_MIN": "30",
+    "NEWS_BLACKOUT_AFTER_MIN": "30",
+    "NEWS_CACHE_SECONDS": "900"
+  },
+  "secrets": {
+    "required": [
+      "APP_PASSWORD",
+      "GEMINI_API_KEY",
+      "DEEPSEEK_API_KEY",
+      "DATABASE_URL"
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

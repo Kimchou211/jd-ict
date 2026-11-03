@@ -1,0 +1,8 @@
+# Copy to .dev.vars for local Wrangler development.
+# Keep values out of source control and never publish them.
+APP_PASSWORD=
+DATABASE_URL=
+GEMINI_API_KEY=
+DEEPSEEK_API_KEY=
+# Optional: Finnhub economic calendar (free key, includes Actual values). Without it the free Forex Factory JSON is used.
+FINNHUB_API_KEY=
