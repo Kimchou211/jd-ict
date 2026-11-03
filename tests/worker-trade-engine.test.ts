@@ -90,8 +90,30 @@ test("strict mode keeps conditional scenarios and withholds levels for unreadabl
   assert.equal(setups[0].pullback_low, 2344.5);
 });
 
-test("forced mode produces best-effort levels from axis estimates and marks the signal provisional", () => {
-  const forcedEnv = { ...env, FORCE_SIGNAL: "true" };
+test("strict analysis retains provider-specific screenshot quality evidence", () => {
+  const item = provider("WAIT");
+  item.chart_reads[0] = {
+    ...item.chart_reads[0],
+    symbol_header_visible: true,
+    timeframe_label_visible: false,
+    chart_area_visibility: 80,
+    price_axis_visibility: "partial",
+    indicator_panel_visibility: "visible",
+    glare: "possible",
+    rotated: "no",
+    cropped: "no",
+    blur_risk: "low",
+  };
+  const result = buildTradeRead([item], {}, "M1", "M5", env);
+  const observations = (result.chart_reads as Array<Record<string, unknown>>)[0].visual_observations as Array<Record<string, unknown>>;
+  assert.equal(observations[0].provider, "Gemini");
+  assert.equal(observations[0].symbol_header_visible, true);
+  assert.equal(observations[0].price_axis_visibility, "partial");
+  assert.equal(observations[0].glare, "possible");
+});
+
+test("image-only force mode is opt-in and separate from the Live Terminal setting", () => {
+  const forcedEnv = { ...env, FORCE_SIGNAL: "false", IMAGE_FORCE_SIGNAL: "true" };
   const item = provider("BUY", {
     chart_reads: [
       { trend: "bullish", confidence: 60, price_estimate: 2350, atr_estimate: 2, price_scale_top: 2360, price_scale_bottom: 2340, price_scale_readable: true },
@@ -120,7 +142,7 @@ test("trend-only forced direction uses localhost fallback confidence without ove
     {},
     "M1",
     "M5",
-    { ...env, FORCE_SIGNAL: "true" },
+    { ...env, FORCE_SIGNAL: "false", IMAGE_FORCE_SIGNAL: "true" },
   );
   assert.equal(result.direction, "BUY");
   assert.equal(result.confidence, 35);

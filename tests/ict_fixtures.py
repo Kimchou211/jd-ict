@@ -23,7 +23,7 @@ def bearish_setup_bars(extra_tail=0):
     pts = [(0, 4000.0), (12, 4009.0), (24, 4003.0), (36, 4010.0), (44, 4004.0), (51, 4009.5)]
     rows = [(0, 4000.0, 4000.3, 3999.7, 4000.0)] + _lin(pts)
     rows += [
-        (52, 4009.5, 4011.0, 4008.8, 4008.0),   # sweep: wick above 4010.3 swing high, closes back inside
+        (52, 4009.5, 4011.0, 4007.8, 4008.0),   # sweep: wick above 4010.3 swing high, closes back inside
         (53, 4008.0, 4008.2, 4002.2, 4002.5),   # displacement leg
         (54, 4002.5, 4002.7, 3996.8, 3997.0),
         (55, 3997.0, 3997.5, 3993.8, 3994.0),   # bear FVG = [3997.5, 4002.2] (middle candle 54)

@@ -32,6 +32,19 @@ function readAt(result: JsonRecord, index: number): JsonRecord {
   return records(result.chart_reads)[index] || {};
 }
 
+function visualObservations(results: JsonRecord[], index: number): JsonRecord[] {
+  const fields = [
+    "symbol_header_visible", "timeframe_label_visible", "chart_area_visibility",
+    "price_axis_visibility", "indicator_panel_visibility", "glare", "rotated", "cropped", "blur_risk",
+  ];
+  return results.map((result) => {
+    const read = readAt(result, index);
+    const observation: JsonRecord = { provider: text(result.provider, "Unknown", 40) };
+    for (const field of fields) observation[field] = read[field] ?? null;
+    return observation;
+  });
+}
+
 function text(value: unknown, fallback = "", limit = 1200): string {
   return ["string", "number"].includes(typeof value) ? String(value).trim().slice(0, limit) : fallback;
 }
@@ -197,7 +210,8 @@ function buildStrictRead(
   const providerCount = results.length;
   const out: JsonRecord = {
     symbol: profile.name, mode: "IMAGE_ONLY", direction: "WAIT", model_bias: modelBias,
-    trade_ready: false, levels_available: false, signal_status: "WAIT_FOR_CONFIRMATION",
+    trade_ready: false, levels_available: false, forced_signal: false, force_signal_used: false,
+    signal_status: "WAIT_FOR_CONFIRMATION",
     confidence, entry_price: null, entry_low: null, entry_high: null, stop_loss: null,
     take_profit_1: null, take_profit_2: null, atr_primary: null, atr_secondary: null,
     effective_atr: null, price_source: "Uploaded screenshot only; not live market data",
@@ -295,6 +309,7 @@ function buildStrictRead(
       atr_period: periodOk ? Math.trunc(periods[0]) : null,
       price_scale: { top: scaleOk ? round(top!, 2) : null, bottom: scaleOk ? round(bottom!, 2) : null, verified: Boolean(scaleOk) },
       key_levels: keyLevels, annotations: uniqueAnnotations,
+      visual_observations: visualObservations(results, index),
       provider_reads: results.map((item) => {
         const read = readAt(item, index);
         return {
@@ -673,7 +688,7 @@ export function buildTradeRead(
 ): JsonRecord {
   const normalizedSymbol = symbolProfile(symbol).name;
   const strict = buildStrictRead(providerResults, providerErrors, tfPrimary, tfSecondary, env, normalizedSymbol);
-  return env.FORCE_SIGNAL?.trim().toLowerCase() === "false"
-    ? strict
-    : applyForcedSignal(strict, providerResults, tfPrimary, tfSecondary, env, normalizedSymbol);
+  return env.IMAGE_FORCE_SIGNAL?.trim().toLowerCase() === "true"
+    ? applyForcedSignal(strict, providerResults, tfPrimary, tfSecondary, env, normalizedSymbol)
+    : strict;
 }

@@ -1,112 +1,49 @@
 """Live XAUUSD quote retrieval and deterministic multi-indicator scan.
 
-Quotes and candles are fetched server-side from Yahoo Finance's XAUUSD=X chart feed.
-The source timestamp is always carried through so stale data can be flagged rather than
-silently described as live. This is market-data analysis only; it never places orders.
+Candles use the configured Twelve Data provider with Yahoo Finance fallback. The source
+timestamp is carried through so stale data is flagged rather than silently called live.
+This is market-data analysis only; it never places orders.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from math import isfinite
 from typing import Any
 
-import httpx
+from .market_data import fetch_candles
 
-YAHOO_SYMBOL = "XAUUSD=X"
-YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}"
-INTERVALS: dict[str, dict[str, Any]] = {
-    "1m": {"range": "1d", "minutes": 1, "label": "M1"},
-    "5m": {"range": "5d", "minutes": 5, "label": "M5"},
-    "15m": {"range": "1mo", "minutes": 15, "label": "M15"},
-    "60m": {"range": "1mo", "minutes": 60, "label": "H1"},
-}
-
-
-def _number(value: Any) -> float | None:
-    try:
-        result = float(value)
-        return result if isfinite(result) else None
-    except (TypeError, ValueError):
-        return None
+INTERVALS = {"1m": "M1", "5m": "M5", "15m": "M15", "60m": "H1"}
 
 
 async def fetch_live_market(interval: str = "1m") -> dict[str, Any]:
-    """Fetch recent XAUUSD spot bars from Yahoo's chart endpoint."""
-    settings = INTERVALS.get(interval)
-    if not settings:
+    """Fetch live-terminal candles through the shared configured-provider fallback."""
+    timeframe = INTERVALS.get(interval)
+    if timeframe is None:
         raise ValueError("Unsupported interval. Choose 1m, 5m, 15m or 60m.")
-    url = YAHOO_URL.format("XAUUSD%3DX")
-    params = {"range": settings["range"], "interval": interval, "includePrePost": "true"}
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
-        "Accept": "application/json,text/plain,*/*",
-    }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=6.0), headers=headers, follow_redirects=True) as client:
-        response = await client.get(url, params=params)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Yahoo Finance market-data request failed ({response.status_code}).")
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise RuntimeError("Market-data provider returned a non-JSON response.") from exc
-
-    chart = payload.get("chart") or {}
-    errors = chart.get("error")
-    results = chart.get("result") or []
-    if errors or not results:
-        description = errors.get("description") if isinstance(errors, dict) else None
-        raise RuntimeError(f"XAUUSD spot feed unavailable{': ' + str(description) if description else ''}. Check provider availability and try Refresh.")
-    result = results[0]
-    timestamps = result.get("timestamp") or []
-    quote_list = ((result.get("indicators") or {}).get("quote") or [{}])
-    quote = quote_list[0] if quote_list else {}
-    bars: list[dict[str, Any]] = []
-    for index, stamp in enumerate(timestamps):
-        try:
-            o = _number((quote.get("open") or [])[index])
-            h = _number((quote.get("high") or [])[index])
-            low = _number((quote.get("low") or [])[index])
-            close = _number((quote.get("close") or [])[index])
-        except IndexError:
-            continue
-        if None in (o, h, low, close) or h < low:
-            continue
-        volume_values = quote.get("volume") or []
-        vol = _number(volume_values[index]) if index < len(volume_values) else None
-        stamp_ms = int(stamp) * 1000
-        bars.append({
-            "time": datetime.fromtimestamp(int(stamp), timezone.utc).isoformat(),
-            "timestamp_ms": stamp_ms,
-            "open": o, "high": h, "low": low, "close": close,
-            "volume": vol or 0,
-        })
-    if len(bars) < 35:
-        raise RuntimeError(f"Live XAUUSD feed returned only {len(bars)} usable candles; at least 35 are needed for a scan.")
-
-    meta = result.get("meta") or {}
-    now = datetime.now(timezone.utc).timestamp()
-    last_epoch = bars[-1]["timestamp_ms"] / 1000
-    age_seconds = max(0, int(now - last_epoch))
-    quote_price = _number(meta.get("regularMarketPrice"))
-    # On some feeds the metadata price is older/missing; use the most recent returned close and label its timestamp.
-    price = quote_price if quote_price is not None and age_seconds <= 180 else bars[-1]["close"]
+    feed = await fetch_candles(timeframe)
+    source = feed["source"]
+    feed_symbol = "XAU/USD" if source.startswith("Twelve Data") else "XAUUSD=X"
     return {
         "symbol": "XAUUSD",
-        "feed_symbol": meta.get("symbol") or YAHOO_SYMBOL,
-        "source": "Yahoo Finance · XAUUSD spot chart feed",
-        "provider_url": "https://finance.yahoo.com/quote/XAUUSD=X/",
-        "currency": meta.get("currency") or "USD",
-        "exchange_timezone": meta.get("exchangeTimezoneName") or "UTC",
+        "feed_symbol": feed_symbol,
+        "source": source,
+        "provider_url": ("https://twelvedata.com/" if feed_symbol == "XAU/USD"
+                         else "https://finance.yahoo.com/quote/XAUUSD=X/"),
+        "currency": "USD",
+        "exchange_timezone": "UTC",
         "interval": interval,
-        "timeframe": settings["label"],
-        "price": price,
-        "provider_market_price": quote_price,
-        "last_bar_time": bars[-1]["time"],
-        "last_bar_timestamp_ms": bars[-1]["timestamp_ms"],
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "age_seconds": age_seconds,
-        "is_stale": age_seconds > max(180, settings["minutes"] * 180),
-        "bars": bars[-120:],
+        "timeframe": timeframe,
+        "price": feed["price"],
+        "provider_market_price": None,
+        "last_bar_time": feed["last_bar_time"],
+        "last_bar_timestamp_ms": feed["last_bar_ms"],
+        "fetched_at": feed["fetched_at"],
+        "age_seconds": feed["age_seconds"],
+        "is_stale": feed["is_stale"],
+        "bars": feed["bars"][-120:],
+        **{
+            key: feed[key]
+            for key in ("fallback_reason", "data_quality_status", "missing_candle_count", "aggregation_source")
+            if key in feed
+        },
     }
 
 

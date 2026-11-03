@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -33,6 +34,50 @@ def test_bearish_plan_is_geometrically_valid():
     assert p["stop"] > p["entry_high"] >= p["entry"] >= p["entry_low"] > p["tp1"] > p["tp2"]
     assert p["rr1"] >= 1.5 and abs(p["rr1"] - abs(p["entry"] - p["tp1"]) / p["risk"]) < 0.02
     assert p["stop"] > max(b["high"] for b in bearish_setup_bars()[52:54])  # stop above the sweep extreme
+
+
+def test_scanner_covers_available_timeframes_and_returns_stable_model_candidates():
+    bars = bearish_setup_bars()
+    feeds = {"M5": bars, "M15": bars}
+    result = E.scan(feeds, "M5")
+    repeated = E.scan(feeds, "M5")
+
+    assert result["coverage"]["M5"]["status"] == "SCANNED"
+    assert result["coverage"]["M15"]["status"] == "SCANNED"
+    assert {setup["timeframe"] for setup in result["setups"]} == {"M5", "M15"}
+    assert [setup["id"] for setup in result["setups"]] == [setup["id"] for setup in repeated["setups"]]
+    assert result["unique_opportunity_count"] < result["model_classification_count"]
+    enabled = [model for model in result["model_registry"] if model["enabled"]]
+    assert {model["id"] for model in enabled if model["available"]} == {
+        "ICT_2022", "LIQUIDITY_SWEEP_REVERSAL", "TURTLE_SOUP",
+    }
+
+    filtered = E.scan(feeds, "M5", filters={"model": "ICT_2022", "direction": "SELL", "timeframe": "M15"})
+    assert filtered["setups"]
+    assert all(setup["model_id"] == "ICT_2022" and setup["timeframe"] == "M15" for setup in filtered["setups"])
+
+    context_only = E.scan({"D1": bars}, "D1")
+    ict_2022 = next(model for model in context_only["model_registry"] if model["id"] == "ICT_2022")
+    assert not ict_2022["available"] and ict_2022["status"] == "DATA_UNAVAILABLE"
+
+
+def test_setup_lifecycle_history_records_transitions():
+    from app.ict_routes import _attach_setup_history
+
+    result = scan()
+    setup = result["setups"][0]
+    previous = {
+        "setups": [{**setup, "lifecycle": "WAITING_FOR_RETRACE"}],
+        "setup_lifecycle_history": [{
+            "setup_id": setup["id"], "opportunity_id": setup["opportunity_id"],
+            "lifecycle": "WAITING_FOR_RETRACE", "observed_at_ms": result["time_ms"] - 300_000,
+        }],
+    }
+    setup["lifecycle"] = "ENTRY_READY"
+    _attach_setup_history(result, previous)
+    history = [event for event in result["setup_lifecycle_history"] if event["setup_id"] == setup["id"]]
+    assert [event["lifecycle"] for event in history] == ["WAITING_FOR_RETRACE", "ENTRY_READY"]
+    assert setup["lifecycle_history"] == history
 
 
 def test_too_few_candles_is_rejected():
@@ -100,7 +145,10 @@ def _feeds(monkeypatch):
     async def fake_many(tfs, symbol="XAUUSD"):
         return {tf: dict(feed, tf=tf, bars=copy.deepcopy(bars)) for tf in tfs}
 
-    monkeypatch.setattr(ict_routes, "fetch_many", fake_many)
+    async def fake_candles(tf, force=False, symbol="XAUUSD"):
+        return dict(feed, tf=tf, bars=copy.deepcopy(bars))
+
+    monkeypatch.setattr(ict_routes, "fetch_candles", fake_candles)
 
 
 def test_api_scan_saves_history_and_stats(monkeypatch):
@@ -112,11 +160,23 @@ def test_api_scan_saves_history_and_stats(monkeypatch):
         j = r.json()
         a = j["analysis"]
         assert a["final_direction"] == "SELL" and a["ict_plan"] and a["drawings"] and j["id"]
+        assert a["scanner_status"] == "SETUPS_FOUND"
+        assert len(a["model_registry"]) == len(E.SPEC["scanner"]["models"])
+        assert a["setup_lifecycle_history"]
+        assert all(setup["lifecycle_history"] for setup in a["setups"])
         rec = c.get(f"/api/history/{j['id']}").json()
         assert rec["tf_secondary"] == "ICT" and rec["stop_loss"] == a["plan"]["stop"]
         c.post(f"/api/history/{j['id']}/outcome", json={"result": "TP1"})
         st = c.get("/api/stats").json()
         assert st["resolved"] == 1 and abs(st["total_r"] - a["plan"]["rr1"]) < 0.02   # real R from the plan, not a fixed 1R
+
+
+def test_ict_scan_rejects_unknown_model_filter(monkeypatch):
+    from app.main import app
+    _feeds(monkeypatch)
+    with TestClient(app) as c:
+        response = c.post("/api/ict/scan?tf=M5&ai=false&model=UNKNOWN")
+        assert response.status_code == 400
 
 
 def test_login_when_password_set(monkeypatch):
@@ -154,6 +214,38 @@ def test_symbol_profiles_and_aliases():
         assert False
     except ValueError:
         pass
+
+
+def _hourly_period_history(missing_dates=()):
+    start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 4, 2, tzinfo=timezone.utc)
+    missing_dates = set(missing_dates)
+    bars = []
+    timestamp = start
+    while timestamp < end:
+        if timestamp.weekday() < 5 and timestamp.date() not in missing_dates:
+            price = 2400 + (int((timestamp - start).total_seconds() // 3600) % 48) * 0.1
+            bars.append(_bar(int(timestamp.timestamp() * 1000), price, price + 0.2, price - 0.2, price + 0.05))
+        timestamp += timedelta(hours=1)
+    return bars
+
+
+def test_previous_week_and_month_levels_require_period_coverage():
+    from datetime import date
+
+    complete = E.scan({"H1": _hourly_period_history()}, "H1", "XAUUSD")
+    kinds = complete["level_table"]
+    assert any(key.startswith("PWH") for key in kinds)
+    assert any(key.startswith("PWL") for key in kinds)
+    assert any(key.startswith("PMH") for key in kinds)
+    assert any(key.startswith("PML") for key in kinds)
+
+    missing_weekdays = [date(2026, 3, day) for day in range(2, 16)
+                        if date(2026, 3, day).weekday() < 5]
+    limited = E.scan({"H1": _hourly_period_history(missing_weekdays)}, "H1", "XAUUSD")
+    limited_kinds = limited["level_table"]
+    assert any(key.startswith("PWH") for key in limited_kinds)
+    assert not any(key.startswith("PMH") for key in limited_kinds)
 
 
 def test_screenshot_annotations_keep_ict_labels():

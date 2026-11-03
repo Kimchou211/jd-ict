@@ -1,15 +1,29 @@
+import spec from "../shared/ict-engine-spec.json" with { type: "json" };
+import {
+  analyzeAdvancedPdArrays,
+  classifyIctRegime,
+  detectIctCisd,
+  detectIctDisplacement,
+  enrichIctFvgs,
+  ictDataQuality,
+  ictLocalDateTime,
+  ictSessionInfo,
+  validatedIctOte,
+} from "./ict-advanced.ts";
+
 export interface IctCandle {
   timestamp_ms: number;
   open: number;
   high: number;
   low: number;
   close: number;
+  complete?: boolean;
   [key: string]: unknown;
 }
 
 export type IctFeed = IctCandle[] | { bars: IctCandle[] };
 export type IctFeeds = Record<string, IctFeed | undefined>;
-export type IctTimeframe = "M1" | "M5" | "M15";
+export type IctTimeframe = "M1" | "M5" | "M15" | "H1" | "H4" | "D1" | "W1";
 
 type Direction = "bull" | "bear";
 type Side = "buy" | "sell";
@@ -30,6 +44,8 @@ type Sweep = {
 type Zone = {
   dir: Direction; low: number; high: number; i: number; ts: number;
   end_i: number | null; touched: boolean; ref?: string;
+  ce?: number; size?: number; size_atr?: number; first_touch_i?: number | null;
+  retest_count?: number; mitigation_pct?: number; lifecycle?: string; invalidation_i?: number;
 };
 type OrderBlock = Zone & { event_i: number };
 type IctPlan = {
@@ -42,6 +58,9 @@ type Setup = {
   direction: Direction; action: "BUY" | "SELL"; status: string; score: number;
   reasons: string[]; sweep: Sweep; event: Pick<StructureEvent, "i" | "ts" | "kind" | "dir" | "level">;
   arrays: string[]; fvg: Zone | null; ob: OrderBlock | null; plan: IctPlan;
+  displacement: ReturnType<typeof detectIctDisplacement>;
+  ote: ReturnType<typeof validatedIctOte>;
+  score_components: Record<string, number>;
   id?: string; refs?: Record<string, string | null>;
 };
 type IctPd = ReturnType<typeof premiumDiscount>;
@@ -49,6 +68,23 @@ type IctBias = { label: "BULLISH" | "BEARISH" | "NEUTRAL"; score: number; h1: Di
 
 export interface IctScanSetup {
   id: string;
+  legacy_setup_id?: string;
+  opportunity_id?: string;
+  event_id?: string;
+  model_id?: string;
+  model_name?: string;
+  model_family?: string;
+  timeframe?: IctTimeframe;
+  lifecycle?: string;
+  entry_zone?: { low: number; high: number };
+  invalidation?: { price: number; condition: string };
+  target?: { tp1: number; tp2: number; liquidity_basis: string };
+  expiry_ms?: number;
+  data_quality_score?: number;
+  missing_confirmations?: string[];
+  is_current?: boolean;
+  ranking?: Record<string, number>;
+  rank?: number;
   direction: Direction;
   action: IctAction;
   status: string;
@@ -59,6 +95,9 @@ export interface IctScanSetup {
   refs: Record<string, string | null>;
   sweep: Pick<Sweep, "kind" | "level" | "extreme" | "ts">;
   event: Pick<StructureEvent, "i" | "ts" | "kind" | "dir" | "level">;
+  displacement: ReturnType<typeof detectIctDisplacement>;
+  ote: ReturnType<typeof validatedIctOte>;
+  score_components: Record<string, number>;
 }
 
 export interface IctScanResult {
@@ -76,6 +115,7 @@ export interface IctScanResult {
   crt: Record<string, unknown>;
   setups: IctScanSetup[];
   selected: string | null;
+  selected_timeframe?: IctTimeframe | null;
   direction: IctAction | "WAIT";
   action: "ENTER_ON_RETRACE" | "PRICE_IN_ENTRY_ZONE" | "WAIT_FOR_SETUP";
   confluence_score: number;
@@ -85,6 +125,19 @@ export interface IctScanResult {
   drawings: Record<string, unknown>[];
   level_table: Record<string, Record<string, number>>;
   min_score: number;
+  engine_version: string;
+  setup_score: number;
+  data_quality_score: number;
+  entry_readiness_score: number;
+  data_quality: Record<string, unknown>;
+  advanced: Record<string, unknown>;
+  model_registry: Record<string, unknown>[];
+  structure_layers: Record<string, unknown>;
+  scanner_status?: string;
+  coverage?: Record<string, Record<string, unknown>>;
+  unique_opportunity_count?: number;
+  model_classification_count?: number;
+  filters_applied?: Record<string, unknown>;
 }
 
 export interface IctAiReview {
@@ -116,16 +169,13 @@ export interface IctVerdict {
   verdict_notes: string[];
 }
 
-const TF_MIN: Record<string, number> = { M1: 1, M5: 5, M15: 15, H1: 60 };
-const LOOKBACK: Record<string, number> = { M1: 90, M5: 80, M15: 60 };
-const VALID_HOURS: Record<string, number> = { M1: 2, M5: 6, M15: 18 };
-const ASIA_UTC: [number, number] = [0, 7];
-const LONDON_KZ_UTC: [number, number] = [7, 10];
-const NY_KZ_UTC: [number, number] = [12, 15];
+const TF_MIN: Record<string, number> = spec.timeframes_minutes;
+const LOOKBACK: Record<string, number> = spec.setup_lookback_bars;
+const VALID_HOURS: Record<string, number> = spec.setup_validity_hours;
 
 const PROFILES = {
-  XAUUSD: { aliases: ["XAUUSD", "XAUUSDM", "GOLD", "GOLDUSD"], tol_floor: 0.3, buf_floor: 0.3, gap_floor: 0.05 },
-  BTCUSD: { aliases: ["BTCUSD", "BTCUSDT", "BTCUSDM", "BITCOIN", "XBTUSD"], tol_floor: 8, buf_floor: 5, gap_floor: 1 },
+  XAUUSD: { aliases: ["XAUUSD", "XAUUSDM", "GOLD", "GOLDUSD"], tol_floor: 0.3, buf_floor: 0.3, gap_floor: 0.05, weekend_closed: true },
+  BTCUSD: { aliases: ["BTCUSD", "BTCUSDT", "BTCUSDM", "BITCOIN", "XBTUSD"], tol_floor: 8, buf_floor: 5, gap_floor: 1, weekend_closed: false },
 } as const;
 
 function normalizeSymbol(symbol?: string): keyof typeof PROFILES {
@@ -152,7 +202,7 @@ function round(value: number, digits = 0): number {
   return rounded / factor;
 }
 
-export function calcIctAtr(bars: IctCandle[], period = 14): number {
+export function calcIctAtr(bars: IctCandle[], period = spec.indicators.atr_period): number {
   if (bars.length < 2) return 0;
   const trs: number[] = [];
   for (let i = 1; i < bars.length; i++) {
@@ -163,18 +213,9 @@ export function calcIctAtr(bars: IctCandle[], period = 14): number {
   return tail.length ? tail.reduce((a, b) => a + b, 0) / tail.length : 0;
 }
 
-function sessionInfo(ts: number) {
-  const d = new Date(ts), h = d.getUTCHours() + d.getUTCMinutes() / 60;
-  let name = "OFF_HOURS", in_killzone = false;
-  if (h >= ASIA_UTC[0] && h < ASIA_UTC[1]) name = "ASIA";
-  else if (h >= LONDON_KZ_UTC[0] && h < LONDON_KZ_UTC[1]) { name = "LONDON_KZ"; in_killzone = true; }
-  else if (h >= NY_KZ_UTC[0] && h < NY_KZ_UTC[1]) { name = "NY_KZ"; in_killzone = true; }
-  else if (h >= LONDON_KZ_UTC[1] && h < NY_KZ_UTC[0]) name = "LONDON";
-  else if (h >= NY_KZ_UTC[1] && h < 21) name = "NEW_YORK";
-  return { name, in_killzone, utc_hour: round(h, 2) };
-}
+function sessionInfo(ts: number) { return ictSessionInfo(ts); }
 
-function findSwings(bars: IctCandle[], left = 3, right = 3): Swing[] {
+function findSwings(bars: IctCandle[], left = spec.indicators.swing_left, right = spec.indicators.swing_right): Swing[] {
   const out: Swing[] = [];
   for (let i = left; i < bars.length - right; i++) {
     const h = bars[i].high, l = bars[i].low;
@@ -222,8 +263,23 @@ function marketStructure(bars: IctCandle[], swings: Swing[]) {
   return { trend, events };
 }
 
+function layeredStructure(bars: IctCandle[]) {
+  const layer = (strength: number) => {
+    const swings = findSwings(bars, strength, strength), structure = marketStructure(bars, swings);
+    return {
+      trend: structure.trend,
+      swings: swings.slice(-8),
+      events: structure.events.slice(-8).map(event => ({ ...event, label: event.kind === "MSS" ? "CHoCH" : "BOS" })),
+    };
+  };
+  return {
+    internal: layer(spec.indicators.internal_swing_strength),
+    external: layer(spec.indicators.external_swing_strength),
+  };
+}
+
 function findFvgs(bars: IctCandle[], atr: number, symbol: keyof typeof PROFILES): Zone[] {
-  const minimum = Math.max(0.08 * atr, PROFILES[symbol].gap_floor);
+  const minimum = Math.max(spec.fvg.min_size_atr * atr, PROFILES[symbol].gap_floor);
   const out: Zone[] = [];
   for (let i = 1; i < bars.length - 1; i++) {
     const prev = bars[i - 1], next = bars[i + 1];
@@ -276,7 +332,7 @@ function cluster(swings: Swing[], tolerance: number): Swing[][] {
   return groups.filter(group => group.length >= 2);
 }
 
-function dayLevels(bars: IctCandle[], lastTs: number) {
+function dayLevels(bars: IctCandle[], lastTs: number, minimumBars = 18) {
   const today = new Date(lastTs).toISOString().slice(0, 10);
   const days = new Map<string, IctCandle[]>();
   for (const bar of bars) {
@@ -288,20 +344,52 @@ function dayLevels(bars: IctCandle[], lastTs: number) {
   const previous = [...days.keys()].filter(date => date < today).sort();
   if (!previous.length) return null;
   const selected = days.get(previous[previous.length - 1])!;
+  if (selected.length < minimumBars) return null;
   const start = Date.parse(`${previous[previous.length - 1]}T00:00:00.000Z`);
   return { high: Math.max(...selected.map(bar => bar.high)), low: Math.min(...selected.map(bar => bar.low)), ts: start };
 }
 
+function previousPeriodLevels(bars: IctCandle[], lastTs: number, period: "week" | "month", weekendClosed: boolean) {
+  const date = new Date(lastTs);
+  const end = period === "week"
+    ? Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - ((date.getUTCDay() + 6) % 7))
+    : Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const start = period === "week" ? end - 7 * 86_400_000 : Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - 1, 1);
+  let expectedDays = period === "week" ? (weekendClosed ? 5 : 7) : 0;
+  if (period === "month") {
+    for (let ts = start; ts < end; ts += 86_400_000) {
+      const weekday = new Date(ts).getUTCDay();
+      if (!weekendClosed || (weekday !== 0 && weekday !== 6)) expectedDays++;
+    }
+  }
+  const byDay = new Map<number, IctCandle[]>();
+  for (const bar of bars) {
+    const date = new Date(bar.timestamp_ms);
+    const dayTs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    if (dayTs < start || dayTs >= end) continue;
+    const list = byDay.get(dayTs) || [];
+    list.push(bar);
+    byDay.set(dayTs, list);
+  }
+  const minimumBars = weekendClosed ? 18 : 20;
+  const validDays = [...byDay.values()].filter(items => items.length >= minimumBars);
+  if (validDays.length < Math.ceil(expectedDays * spec.data_quality.aggregation_min_coverage)) return null;
+  const selected = validDays.flat();
+  return { high: Math.max(...selected.map(bar => bar.high)), low: Math.min(...selected.map(bar => bar.low)), ts: start, end_ts: end };
+}
+
 function asiaRange(bars: IctCandle[], lastTs: number) {
-  const date = new Date(lastTs), hour = date.getUTCHours() + date.getUTCMinutes() / 60;
-  if (hour < ASIA_UTC[1]) return null;
-  const day = date.toISOString().slice(0, 10);
+  const date = ictLocalDateTime(lastTs);
+  const previousDate = new Date(Date.UTC(date.year, date.month - 1, date.day - 1)).toISOString().slice(0, 10);
   const selected = bars.filter(bar => {
-    const d = new Date(bar.timestamp_ms);
-    return d.toISOString().slice(0, 10) === day && d.getUTCHours() >= ASIA_UTC[0] && d.getUTCHours() < ASIA_UTC[1];
+    const local = ictLocalDateTime(bar.timestamp_ms);
+    const localDate = `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`;
+    return localDate === previousDate && local.hour >= 20;
   });
   if (selected.length < 3) return null;
-  return { high: Math.max(...selected.map(bar => bar.high)), low: Math.min(...selected.map(bar => bar.low)), ts: selected[0].timestamp_ms };
+  const step = bars.length > 1 ? bars[1].timestamp_ms - bars[0].timestamp_ms : 300_000;
+  return { high: Math.max(...selected.map(bar => bar.high)), low: Math.min(...selected.map(bar => bar.low)),
+    ts: selected[0].timestamp_ms, end_ts: selected[selected.length - 1].timestamp_ms + step };
 }
 
 function firstIndexAtOrAfter(bars: IctCandle[], ts: number): number {
@@ -324,16 +412,23 @@ function buildLiquidity(bars: IctCandle[], swings: Swing[], atr: number, htf: Ic
       levels.push({ kind: type === "high" ? "SWH" : "SWL", side, price: swing.price, i: swing.i + 3, ts: swing.ts });
     }
   }
-  const lastTs = bars[n - 1].timestamp_ms, day = dayLevels(htf || bars, lastTs);
+  const lastTs = bars[n - 1].timestamp_ms, referenceBars = htf || bars, weekendClosed = PROFILES[symbol].weekend_closed;
+  const day = dayLevels(referenceBars, lastTs, weekendClosed ? 18 : 20);
   if (day) {
     const i = firstIndexAtOrAfter(bars, day.ts + 86_400_000);
     levels.push({ kind: "PDH", side: "buy", price: day.high, i, ts: day.ts }, { kind: "PDL", side: "sell", price: day.low, i, ts: day.ts });
   }
+  for (const [period, highKind, lowKind] of [["week", "PWH", "PWL"], ["month", "PMH", "PML"]] as const) {
+    const periodLevels = previousPeriodLevels(referenceBars, lastTs, period, weekendClosed);
+    if (periodLevels) {
+      const i = firstIndexAtOrAfter(bars, periodLevels.end_ts);
+      levels.push({ kind: highKind, side: "buy", price: periodLevels.high, i, ts: periodLevels.ts },
+        { kind: lowKind, side: "sell", price: periodLevels.low, i, ts: periodLevels.ts });
+    }
+  }
   const asia = asiaRange(bars, lastTs);
   if (asia) {
-    const d = new Date(lastTs);
-    d.setUTCHours(ASIA_UTC[1], 0, 0, 0);
-    const i = Math.min(n - 1, firstIndexAtOrAfter(bars, d.getTime()));
+    const i = Math.min(n - 1, firstIndexAtOrAfter(bars, asia.end_ts));
     levels.push({ kind: "ASIA_H", side: "buy", price: asia.high, i, ts: asia.ts }, { kind: "ASIA_L", side: "sell", price: asia.low, i, ts: asia.ts });
   }
   if (crt.high !== null && crt.high !== undefined) {
@@ -366,7 +461,8 @@ function buildLiquidity(bars: IctCandle[], swings: Swing[], atr: number, htf: Ic
     }
   }
   sweeps.sort((a, b) => a.i - b.i);
-  const rank: Record<string, number> = { PDH: 5, PDL: 5, ASIA_H: 4, ASIA_L: 4, CRT_H: 4, CRT_L: 4, EQH: 3, EQL: 3, SWH: 1, SWL: 1 };
+  const rank: Record<string, number> = { PMH: 7, PML: 7, PWH: 6, PWL: 6, PDH: 5, PDL: 5,
+    ASIA_H: 4, ASIA_L: 4, CRT_H: 4, CRT_L: 4, EQH: 3, EQL: 3, SWH: 1, SWL: 1 };
   const best = new Map<string, Sweep>();
   for (const sweep of sweeps) {
     const key = `${sweep.i}:${sweep.side}`, current = best.get(key);
@@ -418,18 +514,25 @@ function setupStatus(direction: Direction, price: number, zone: [number, number]
 function buildSetup(direction: Direction, ctx: {
   bars: IctCandle[]; ltf: string; atr: number; price: number; sweeps: Sweep[]; events: StructureEvent[];
   fvgs: Zone[]; obs: OrderBlock[]; liquidity: LiquidityLevel[]; pd: ReturnType<typeof premiumDiscount>;
-  crt: Record<string, unknown>; bias: ReturnType<typeof mtfBias>; session: ReturnType<typeof sessionInfo>; symbol: keyof typeof PROFILES;
-}): Setup | null {
+  crt: Record<string, unknown>; bias: ReturnType<typeof mtfBias>; session: ReturnType<typeof sessionInfo>;
+  symbol: keyof typeof PROFILES; dataQuality: ReturnType<typeof ictDataQuality>;
+}, selectedSweep?: Sweep, selectedEvent?: StructureEvent): Setup | null {
   const { bars, ltf, atr, price } = ctx, n = bars.length, look = LOOKBACK[ltf] ?? 80;
   const side: Side = direction === "bear" ? "buy" : "sell";
   const sweeps = ctx.sweeps.filter(s => s.side === side && s.confirm_i >= n - look).sort((a, b) => b.i - a.i);
-  let chosen: Sweep | null = null, event: StructureEvent | null = null;
-  for (const sweep of sweeps) {
-    const found = ctx.events.find(e => e.dir === direction && e.i >= sweep.confirm_i - 1 && e.i <= sweep.i + 60);
-    if (found) { chosen = sweep; event = found; break; }
+  let chosen: Sweep | null = selectedSweep || null, event: StructureEvent | null = selectedEvent || null;
+  if (!chosen || !event) {
+    chosen = null; event = null;
+    for (const sweep of sweeps) {
+      const found = ctx.events.find(e => e.dir === direction && e.i >= sweep.confirm_i - 1 && e.i <= sweep.i + 60);
+      if (found) { chosen = sweep; event = found; break; }
+    }
   }
   if (!chosen || !event) return null;
   const sw = chosen;
+  const eventBars = bars.slice(0, event.i + 1);
+  const displacement = detectIctDisplacement(eventBars, calcIctAtr(eventBars));
+  const ote = validatedIctOte(bars, event, atr);
   const range = bars.slice(sw.i, event.i + 1);
   const extreme = direction === "bear" ? Math.max(...range.map(b => b.high)) : Math.min(...range.map(b => b.low));
   let stop = direction === "bear" ? extreme + Math.max(0.15 * atr, PROFILES[ctx.symbol].buf_floor)
@@ -445,16 +548,9 @@ function buildSetup(direction: Direction, ctx: {
     zone = overlapHigh - overlapLow >= 0.3 * (fvg.high - fvg.low) ? [overlapLow, overlapHigh] : [fvg.low, fvg.high];
   } else if (fvg) { zone = [fvg.low, fvg.high]; arrays = ["FVG"]; }
   else if (ob) { zone = [ob.low, ob.high]; arrays = ["OB"]; }
+  else if (ote) { zone = [ote.low, ote.high]; arrays = ["OTE"]; }
   else {
-    const tail = bars.slice(sw.i);
-    if (direction === "bear") {
-      const legLow = Math.min(...tail.map(b => b.low)), span = extreme - legLow;
-      zone = [legLow + 0.62 * span, legLow + 0.79 * span];
-    } else {
-      const legHigh = Math.max(...tail.map(b => b.high)), span = legHigh - extreme;
-      zone = [legHigh - 0.79 * span, legHigh - 0.62 * span];
-    }
-    arrays = ["OTE"];
+    return null;
   }
   const entry = round((zone[0] + zone[1]) / 2, 2);
   let risk = Math.abs(stop - entry);
@@ -464,7 +560,7 @@ function buildSetup(direction: Direction, ctx: {
   }
   const sign = direction === "bear" ? -1 : 1;
   const candidates = ctx.liquidity.filter(level => level.side === (direction === "bear" ? "sell" : "buy")
-    && level.status === "active" && (level.price - entry) * sign >= 1.5 * risk)
+    && level.status === "active" && (level.price - entry) * sign >= spec.risk.minimum_theoretical_rr * risk)
     .sort((a, b) => Math.abs(a.price - entry) - Math.abs(b.price - entry));
   const tp1 = candidates.length ? candidates[0].price : entry + sign * 2 * risk;
   const tp1Kind = candidates.length ? candidates[0].kind : "2R";
@@ -474,28 +570,36 @@ function buildSetup(direction: Direction, ctx: {
   const rr1 = round(Math.abs(tp1 - entry) / risk, 2), rr2 = round(Math.abs(tp2 - entry) / risk, 2);
   let status = setupStatus(direction, price, zone, stop, tp1);
   const reasons: string[] = [];
-  let score = 0;
+  const components: Record<string, number> = {};
   const bias = ctx.bias.label, aligned = (bias === "BEARISH" && direction === "bear") || (bias === "BULLISH" && direction === "bull");
-  if (aligned) { score += 25; reasons.push(`HTF bias ${bias} (H1/M15 structure) aligned`); }
-  else if (bias === "NEUTRAL") { score += 8; reasons.push("HTF bias neutral/mixed"); }
-  else reasons.push(`Counter-trend vs HTF bias ${bias}`);
-  const big = ["PDH", "PDL", "ASIA_H", "ASIA_L", "CRT_H", "CRT_L", "EQH", "EQL"].includes(sw.kind);
-  score += big ? 25 : 20; reasons.push(`Liquidity sweep of ${sw.kind} @ ${sw.level.toFixed(2)}`);
-  if (event.kind === "MSS") { score += 18; reasons.push("MSS (CHoCH) after sweep"); }
-  else { score += 10; reasons.push("BOS after sweep"); }
-  if (arrays.includes("FVG")) { score += 12; reasons.push("Entry on unfilled FVG"); }
-  if (arrays.includes("OB")) { score += 8; reasons.push("Order block in entry zone"); }
-  if (arrays.length === 1 && arrays[0] === "OTE") { score += 4; reasons.push("No FVG/OB; entry on 62-79% OTE retracement"); }
-  if ((direction === "bear" && extreme >= ctx.pd.eq) || (direction === "bull" && extreme <= ctx.pd.eq)) {
-    score += 8; reasons.push(`Sweep happened in ${direction === "bear" ? "premium" : "discount"}`);
-  }
-  if (ctx.session.in_killzone) { score += 7; reasons.push(`Inside ${ctx.session.name} kill zone`); }
-  if (ctx.crt.dir === direction) { score += 7; reasons.push("CRT manipulation of H1 range agrees"); }
+  if (aligned) { components.higher_timeframe_bias = spec.scoring.groups.higher_timeframe_bias; reasons.push(`HTF bias ${bias} (H1/M15 structure) aligned`); }
+  else if (bias === "NEUTRAL") { components.higher_timeframe_bias = 7; reasons.push("HTF bias neutral/mixed"); }
+  else { components.higher_timeframe_bias = 0; reasons.push(`Counter-trend vs HTF bias ${bias}`); }
+  const big = ["PDH", "PDL", "PWH", "PWL", "PMH", "PML", "ASIA_H", "ASIA_L", "CRT_H", "CRT_L", "EQH", "EQL"].includes(sw.kind);
+  components.liquidity_sweep_quality = big ? spec.scoring.groups.liquidity_sweep_quality : 14;
+  reasons.push(`Liquidity sweep of ${sw.kind} @ ${sw.level.toFixed(2)}`);
+  let structureScore = event.kind === "MSS" ? 10 : 6;
+  if (displacement.classification === "STRONG" || displacement.classification === "EXTREME") structureScore += 10;
+  else if (displacement.classification === "MODERATE") structureScore += 6;
+  components.structure_displacement = Math.min(spec.scoring.groups.structure_displacement, structureScore);
+  reasons.push(event.kind === "MSS" ? "MSS (CHoCH) after sweep" : "BOS after sweep");
+  reasons.push(`${displacement.classification} displacement`);
+  let pdScore = 0;
+  if (arrays.includes("FVG")) { pdScore += 10; reasons.push("Entry on unfilled FVG"); }
+  if (arrays.includes("OB")) { pdScore += 7; reasons.push("Order block in entry zone"); }
+  if (arrays.length === 1 && arrays[0] === "OTE") { pdScore += 6; reasons.push("Validated displacement-leg OTE retracement"); }
+  components.pd_array_confluence = Math.min(spec.scoring.groups.pd_array_confluence, pdScore);
+  components.session_context = ctx.session.in_killzone ? spec.scoring.groups.session_context : 0;
+  if (ctx.session.in_killzone) reasons.push(`Inside ${ctx.session.name} kill zone`);
+  components.target_liquidity = candidates.length ? spec.scoring.groups.target_liquidity : 0;
+  const dataQualityMax = spec.scoring.groups.data_quality;
+  components.data_quality = ctx.dataQuality.score >= 90 ? dataQualityMax : ctx.dataQuality.score >= 70 ? Math.round(dataQualityMax * 0.6) : 0;
   if (event.i < n - look) status = "EXPIRED";
-  score = Math.max(0, Math.min(100, score));
+  const score = Math.max(0, Math.min(spec.scoring.setup_max, Object.values(components).reduce((sum, value) => sum + value, 0)));
   const action = direction === "bear" ? "SELL" : "BUY";
   return { direction, action, status, score, reasons, sweep: sw,
     event: { i: event.i, ts: event.ts, kind: event.kind, dir: event.dir, level: event.level }, arrays, fvg, ob,
+    displacement, ote, score_components: components,
     plan: { direction, action, entry, entry_low: round(zone[0], 2), entry_high: round(zone[1], 2),
       stop: round(stop, 2), tp1: round(tp1, 2), tp2: round(tp2, 2), tp1_basis: tp1Kind, tp2_basis: tp2Kind,
       rr1, rr2, risk: round(risk, 2), ts_start: bars[n - 1].timestamp_ms, bars_ahead: 30,
@@ -578,29 +682,53 @@ function buildDrawings(bars: IctCandle[], ctx: {
   return { drawings, table };
 }
 
+function validateCandles(timeframe: string, input: IctCandle[]): IctCandle[] {
+  const bars = [...input];
+  if (bars.at(-1)?.complete === false) bars.pop();
+  if (bars.some(bar => bar.complete === false)) throw new Error(`${timeframe} contains an incomplete candle before the latest bar.`);
+  let previous = -Infinity;
+  for (const bar of bars) {
+    const values = [bar.timestamp_ms, bar.open, bar.high, bar.low, bar.close];
+    if (values.some(value => !Number.isFinite(value))) throw new Error(`${timeframe} contains a non-finite OHLC value or timestamp.`);
+    if (bar.timestamp_ms <= previous) throw new Error(`${timeframe} candles must have unique, increasing timestamps.`);
+    if (bar.high < Math.max(bar.open, bar.close, bar.low) || bar.low > Math.min(bar.open, bar.close, bar.high)) {
+      throw new Error(`${timeframe} contains invalid OHLC bounds.`);
+    }
+    previous = bar.timestamp_ms;
+  }
+  return bars;
+}
+
 /**
  * Deterministic candle-only ICT scan. feeds may map each timeframe to candle arrays
  * or feed objects containing a `bars` array.
  */
-export function scanIct(
+function scanIctSingle(
   feeds: IctFeeds,
   ltf: IctTimeframe = "M5",
   symbol = "XAUUSD",
   options: { minScore?: number } = {},
 ): IctScanResult {
   const minScore = options.minScore ?? 60;
-  if (!["M1", "M5", "M15"].includes(ltf)) throw new Error("Entry timeframe must be M1, M5 or M15.");
-  const normalizedSymbol = normalizeSymbol(symbol), bars = barsFrom(feeds[ltf]);
+  if (!Object.hasOwn(TF_MIN, ltf)) throw new Error("Unsupported entry timeframe. Use M1, M5, M15, H1, H4, D1 or W1.");
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const cleanFeeds: IctFeeds = {};
+  for (const [timeframe, feed] of Object.entries(feeds)) {
+    const input = barsFrom(feed);
+    if (input) cleanFeeds[timeframe] = validateCandles(timeframe, input);
+  }
+  const bars = barsFrom(cleanFeeds[ltf]);
   if (!bars) throw new Error(`Missing ${ltf} candles.`);
   if (bars.length < 60) throw new Error(`Need at least 60 ${ltf} candles for an ICT scan (got ${bars.length}).`);
-  const htf = barsFrom(feeds.H1), price = bars[bars.length - 1].close, atr = calcIctAtr(bars);
+  const htf = barsFrom(cleanFeeds.H1), price = bars[bars.length - 1].close, atr = calcIctAtr(bars);
   const swings = findSwings(bars), structure = marketStructure(bars, swings);
+  const structureLayers = layeredStructure(bars);
   const structureByTf: Record<string, { trend: Direction | null; last_event: StructureEvent | null }> = {
     [ltf]: { trend: structure.trend, last_event: structure.events[structure.events.length - 1] || null },
   };
   const pdByTf: Record<string, ReturnType<typeof premiumDiscount>> = {};
-  for (const tf of ["H1", "M15"]) {
-    const tfBars = barsFrom(feeds[tf]);
+  for (const tf of ["D1", "H4", "H1", "M15"]) {
+    const tfBars = barsFrom(cleanFeeds[tf]);
     if (tfBars && tfBars.length >= 30 && tf !== ltf) {
       const st = marketStructure(tfBars, findSwings(tfBars));
       structureByTf[tf] = { trend: st.trend, last_event: st.events[st.events.length - 1] || null };
@@ -611,10 +739,34 @@ export function scanIct(
   const bias = mtfBias(structureByTf, pdByTf.H1), crt = crtRange(htf);
   const { levels, sweeps } = buildLiquidity(bars, swings, atr, htf, crt, normalizedSymbol);
   const fvgs = findFvgs(bars, atr, normalizedSymbol);
+  enrichIctFvgs(bars, fvgs, atr);
   const obs = structure.events.slice(-8).map(event => orderBlockFor(bars, event)).filter((ob): ob is OrderBlock => Boolean(ob));
   const pd = premiumDiscount(bars, price), session = sessionInfo(bars[bars.length - 1].timestamp_ms);
-  const ctx = { bars, ltf, atr, price, swings, events: structure.events, sweeps, fvgs, obs, liquidity: levels, pd, crt, bias, session, symbol: normalizedSymbol };
-  const setups = [buildSetup("bear", ctx), buildSetup("bull", ctx)].filter((s): s is Setup => Boolean(s));
+  const dataQuality = ictDataQuality(bars, ltf);
+  const displacement = detectIctDisplacement(bars, atr), cisd = detectIctCisd(bars, atr);
+  const regime = classifyIctRegime(bars, structure.trend, atr);
+  const pdArrays = analyzeAdvancedPdArrays(bars, fvgs, atr);
+  const ote = validatedIctOte(bars, structure.events.at(-1) || null, atr);
+  const ctx = { bars, ltf, atr, price, swings, events: structure.events, sweeps, fvgs, obs, liquidity: levels,
+    pd, crt, bias, session, symbol: normalizedSymbol, dataQuality };
+  const buildAllSetups = (direction: Direction): Setup[] => {
+    const side: Side = direction === "bear" ? "buy" : "sell";
+    const look = LOOKBACK[ltf] ?? 80, seen = new Set<string>(), found: Setup[] = [];
+    const sweeps = ctx.sweeps.filter(sweep => sweep.side === side && sweep.confirm_i >= bars.length - look)
+      .sort((a, b) => a.i - b.i);
+    for (const sweep of sweeps) {
+      const event = ctx.events.find(candidate => candidate.dir === direction
+        && candidate.i >= sweep.confirm_i - 1 && candidate.i <= sweep.i + 60);
+      if (!event) continue;
+      const key = `${sweep.ts}:${event.ts}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const setup = buildSetup(direction, ctx, sweep, event);
+      if (setup) found.push(setup);
+    }
+    return found;
+  };
+  const setups = [...buildAllSetups("bear"), ...buildAllSetups("bull")];
   [...setups].sort((a, b) => b.score - a.score).forEach((setup, i) => { setup.id = `S${i + 1}`; });
   setups.sort((a, b) => a.id!.localeCompare(b.id!));
   const live = setups.filter(setup => ["AWAITING_RETRACE", "IN_ENTRY_ZONE"].includes(setup.status) && setup.score >= minScore);
@@ -648,16 +800,201 @@ export function scanIct(
     id: setup.id!, direction: setup.direction, action: setup.action, status: setup.status, score: setup.score,
     reasons: setup.reasons, arrays: setup.arrays, plan: setup.plan, refs: setup.refs!,
     sweep: { kind: setup.sweep.kind, level: setup.sweep.level, extreme: setup.sweep.extreme, ts: setup.sweep.ts },
-    event: setup.event,
+    event: setup.event, displacement: setup.displacement, ote: setup.ote, score_components: setup.score_components,
   }));
   const roundedPd: IctPd = {
     ...pd, high: round(pd.high, 2), low: round(pd.low, 2), eq: round(pd.eq, 2),
   };
+  const advanced = { regime, displacement, cisd, ifvgs: pdArrays.ifvgs, bprs: pdArrays.bprs, ote };
+  const entryReadiness = show?.status === "IN_ENTRY_ZONE" ? 100 : show?.status === "AWAITING_RETRACE" ? 65 : 0;
   return {
     scan_type: "ict", symbol: normalizedSymbol, ltf, price: round(price, 2), atr: round(atr, 3), time_ms: bars[bars.length - 1].timestamp_ms,
     session, bias, structure: structureByTf, pd: roundedPd, pd_htf: pdByTf, crt, setups: slimSetups,
     selected: show?.id || null, direction, action, confluence_score: score, reasons,
     plan: show?.plan || null, plan_status: show?.status || null, drawings, level_table: table, min_score: minScore,
+    engine_version: spec.engine_version, setup_score: score, entry_readiness_score: entryReadiness,
+    data_quality: dataQuality, data_quality_score: dataQuality.score, advanced, model_registry: [],
+    structure_layers: structureLayers,
+  };
+}
+
+function setupLifecycle(status: string): string {
+  const states: Record<string, string> = {
+    IN_ENTRY_ZONE: "ENTRY_READY",
+    AWAITING_RETRACE: "WAITING_FOR_RETRACE",
+    TARGET_REACHED: "TARGET_REACHED",
+    INVALIDATED: "INVALIDATED",
+    EXPIRED: "EXPIRED",
+    ZONE_TRADED_THROUGH: "INVALIDATED",
+  };
+  return states[status] || "WAITING_FOR_CONFIRMATION";
+}
+
+function classifySetup(modelId: string, setup: IctScanSetup): boolean {
+  const plan = setup.plan;
+  const checks: Record<string, boolean> = {
+    liquidity_sweep: Boolean(setup.sweep),
+    structure_confirmation: ["MSS", "BOS"].includes(setup.event.kind),
+    structure_shift: setup.event.kind === "MSS",
+    displacement: ["MODERATE", "STRONG", "EXTREME"].includes(setup.displacement.classification),
+    fvg: setup.arrays.includes("FVG"),
+    entry_array: setup.arrays.length > 0,
+    risk_plan: plan.stop !== plan.entry && plan.tp1 !== plan.entry,
+    valid_retrace: ["AWAITING_RETRACE", "IN_ENTRY_ZONE"].includes(setup.status),
+    prior_period_extreme: ["PDH", "PDL", "PWH", "PWL", "PMH", "PML"].includes(setup.sweep.kind),
+    opposing_target: !["2R", "R-extension"].includes(plan.tp1_basis),
+  };
+  const requirements: Record<string, string[]> = {
+    LIQUIDITY_SWEEP_REVERSAL: ["liquidity_sweep", "structure_confirmation", "entry_array", "risk_plan"],
+    ICT_2022: ["liquidity_sweep", "structure_shift", "displacement", "fvg", "valid_retrace"],
+    TURTLE_SOUP: ["prior_period_extreme", "liquidity_sweep", "structure_confirmation", "opposing_target"],
+  };
+  return (requirements[modelId] || []).every(requirement => checks[requirement]);
+}
+
+function rankSetup(setup: IctScanSetup, result: IctScanResult): [number, number, number, number, number, number, number, string] {
+  const plan = setup.plan;
+  const direction = setup.direction;
+  const bias = result.bias.label;
+  const ranking = {
+    setup_score: setup.score,
+    data_quality: result.data_quality_score,
+    entry_readiness: setup.lifecycle === "ENTRY_READY" ? 100 : setup.lifecycle === "WAITING_FOR_RETRACE" ? 65 : 0,
+    higher_timeframe_alignment: Number((direction === "bull" && bias === "BULLISH") || (direction === "bear" && bias === "BEARISH")),
+    liquidity_target_quality: Number(!["2R", "R-extension"].includes(plan.tp1_basis)),
+    risk_reward: plan.rr2,
+    freshness: Math.max(0, 100 - Math.floor(Math.max(0, result.time_ms - setup.event.ts) / (plan.ltf_minutes * 60_000))),
+  };
+  setup.ranking = ranking;
+  return [-ranking.setup_score, -ranking.data_quality, -ranking.entry_readiness,
+    -ranking.higher_timeframe_alignment, -ranking.liquidity_target_quality, -ranking.risk_reward,
+    -ranking.freshness, setup.id];
+}
+
+export function scanIct(
+  feeds: IctFeeds,
+  ltf: IctTimeframe = "M5",
+  symbol = "XAUUSD",
+  options: {
+    minScore?: number;
+    filters?: { symbol?: string; direction?: string; model?: string; timeframe?: string; status?: string; min_score?: number };
+  } = {},
+): IctScanResult {
+  if (!Object.hasOwn(TF_MIN, ltf)) throw new Error("Unsupported entry timeframe. Use M1, M5, M15, H1, H4, D1 or W1.");
+  const normalizedSymbol = normalizeSymbol(symbol), minScore = options.minScore ?? 60;
+  const frames = spec.scanner.coverage_timeframes as IctTimeframe[];
+  const coverage: Record<string, Record<string, unknown>> = {}, frameResults: Partial<Record<IctTimeframe, IctScanResult>> = {};
+  for (const timeframe of frames) {
+    const bars = barsFrom(feeds[timeframe]);
+    if (!bars) {
+      coverage[timeframe] = { status: "UNAVAILABLE", candles: 0 };
+      continue;
+    }
+    if (bars.length < spec.scanner.minimum_candles) {
+      coverage[timeframe] = { status: "INSUFFICIENT_HISTORY", candles: bars.length };
+      continue;
+    }
+    const frameResult = scanIctSingle(feeds, timeframe, normalizedSymbol, { minScore });
+    frameResults[timeframe] = frameResult;
+    coverage[timeframe] = { status: "SCANNED", candles: bars.length, time_ms: frameResult.time_ms };
+  }
+  const primary = frameResults[ltf];
+  if (!primary) {
+    const bars = barsFrom(feeds[ltf]);
+    if (!bars) throw new Error(`Missing ${ltf} candles.`);
+    throw new Error(`Need at least ${spec.scanner.minimum_candles} ${ltf} candles for an ICT scan (got ${bars.length}).`);
+  }
+
+  const models = spec.scanner.models;
+  const candidates: IctScanSetup[] = [], modelCandidateIds = new Map<string, string[]>();
+  for (const model of models) modelCandidateIds.set(model.id, []);
+  for (const [timeframe, frameResult] of Object.entries(frameResults) as [IctTimeframe, IctScanResult][]) {
+    for (const base of frameResult.setups) {
+      const opportunityId = `${normalizedSymbol}:${timeframe}:${base.direction}:${base.sweep.ts}:${base.event.ts}`;
+      for (const model of models) {
+        if (!model.enabled || !model.detector || !(model.timeframes as string[]).includes(timeframe)
+          || !classifySetup(model.id, base)) continue;
+        const candidate: IctScanSetup = {
+          ...base,
+          id: `${opportunityId}:${model.id}`,
+          legacy_setup_id: base.id,
+          opportunity_id: opportunityId,
+          event_id: `${normalizedSymbol}:${timeframe}:${base.event.kind}:${base.event.ts}`,
+          model_id: model.id,
+          model_name: model.name,
+          model_family: model.family,
+          timeframe,
+          lifecycle: setupLifecycle(base.status),
+          entry_zone: { low: base.plan.entry_low, high: base.plan.entry_high },
+          invalidation: { price: base.plan.stop, condition: "price reaches stop" },
+          target: { tp1: base.plan.tp1, tp2: base.plan.tp2, liquidity_basis: base.plan.tp1_basis },
+          expiry_ms: base.plan.valid_until_ms,
+          data_quality_score: frameResult.data_quality_score,
+          missing_confirmations: [],
+          is_current: true,
+        };
+        candidates.push(candidate);
+        modelCandidateIds.get(model.id)!.push(candidate.id);
+      }
+    }
+  }
+
+  const filters = options.filters || {};
+  const filtered = candidates.filter(candidate =>
+    (!filters.symbol || filters.symbol.toUpperCase() === normalizedSymbol)
+    && (!filters.direction || candidate.action === filters.direction.toUpperCase())
+    && (!filters.model || candidate.model_id === filters.model.toUpperCase())
+    && (!filters.timeframe || candidate.timeframe === filters.timeframe.toUpperCase())
+    && (!filters.status || candidate.lifecycle === filters.status.toUpperCase())
+    && candidate.score >= (filters.min_score ?? 0));
+  filtered.sort((a, b) => {
+    const left = rankSetup(a, frameResults[a.timeframe!]!), right = rankSetup(b, frameResults[b.timeframe!]!);
+    for (let i = 0; i < left.length - 1; i++) if (left[i] !== right[i]) return Number(left[i]) - Number(right[i]);
+    return String(left[left.length - 1]).localeCompare(String(right[right.length - 1]));
+  });
+  filtered.forEach((candidate, index) => { candidate.rank = index + 1; });
+  const activeThreshold = filters.min_score ?? minScore;
+  const selected = filtered.find(candidate =>
+    ["ENTRY_READY", "WAITING_FOR_RETRACE"].includes(candidate.lifecycle || "") && candidate.score >= activeThreshold) || null;
+  const displayed = selected || filtered[0] || null;
+
+  const modelRegistry = models.map(model => {
+    const eligible = (model.timeframes as string[]).filter(tf => coverage[tf]?.status === "SCANNED");
+    const missing = (model.timeframes as string[]).filter(tf => !eligible.includes(tf));
+    const found = modelCandidateIds.get(model.id) || [];
+    return {
+      ...model,
+      output_contract: spec.scanner.output_contract,
+      implemented: Boolean(model.enabled && model.detector),
+      available: Boolean(model.enabled && model.detector && eligible.length),
+      status: !model.enabled ? "DISABLED" : found.length ? "CANDIDATES_FOUND" : eligible.length ? "SCANNED_NO_SETUP" : "DATA_UNAVAILABLE",
+      eligible_timeframes: eligible,
+      missing_timeframes: missing,
+      candidate_setup_ids: found,
+      missing_confirmations: found.length ? [] : [...model.requirements],
+    };
+  });
+
+  const selectedScore = selected?.score ?? filtered.reduce((max, candidate) => Math.max(max, candidate.score), 0);
+  return {
+    ...primary,
+    setups: filtered,
+    selected: selected?.id || null,
+    selected_timeframe: selected?.timeframe || null,
+    direction: selected?.action || "WAIT",
+    action: selected ? (selected.lifecycle === "ENTRY_READY" ? "PRICE_IN_ENTRY_ZONE" : "ENTER_ON_RETRACE") : "WAIT_FOR_SETUP",
+    confluence_score: selectedScore,
+    setup_score: selectedScore,
+    entry_readiness_score: selected?.ranking?.entry_readiness || 0,
+    plan: displayed?.plan || null,
+    plan_status: displayed?.status || null,
+    reasons: selected?.reasons || [filtered.length ? "No candidate meets the score and readiness threshold." : "NO_VALID_SETUP"],
+    scanner_status: filtered.length ? "SETUPS_FOUND" : "NO_VALID_SETUP",
+    coverage,
+    model_registry: modelRegistry,
+    unique_opportunity_count: new Set(filtered.map(candidate => candidate.opportunity_id)).size,
+    model_classification_count: filtered.length,
+    filters_applied: filters,
   };
 }
 
@@ -680,7 +1017,7 @@ export function validateAiReview(review: IctAiReview, scan: IctScanResult, toler
   const direction = (review.direction === undefined ? "WAIT" : String(review.direction)).toUpperCase();
   if (!["BUY", "SELL", "WAIT"].includes(direction)) issues.push(`invalid direction '${direction}'`);
   const selected = review.selected_setup;
-  const setupIds = new Set(scan.setups.map(setup => setup.id));
+  const setupIds = new Set(scan.setups.flatMap(setup => [setup.id, setup.legacy_setup_id].filter((id): id is string => Boolean(id))));
   if (selected !== undefined && selected !== null && selected !== "NONE" && !setupIds.has(String(selected))) {
     issues.push(`unknown setup '${String(selected)}'`);
   }

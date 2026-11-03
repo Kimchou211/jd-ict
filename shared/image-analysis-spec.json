@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "normalization": {
+    "format": "image/jpeg",
+    "max_dimension": 2200,
+    "jpeg_quality": 0.92,
+    "background": "#ffffff",
+    "color_space": "sRGB",
+    "orientation": "apply_exif",
+    "minimum_width": 320,
+    "minimum_height": 200,
+    "unusual_aspect_ratio_below": 0.5,
+    "unusual_aspect_ratio_above": 3.5,
+    "blur_variance_threshold": 30
+  },
+  "stages": [
+    { "id": "image_intake", "name": "Image intake and quality check", "output": ["source_dimensions", "normalized_dimensions", "format", "orientation", "aspect_ratio", "sharpness_screen", "warnings"] },
+    { "id": "visual_extraction", "name": "Visual extraction", "output": ["symbol_header", "timeframe_label", "price_axis_visibility", "indicator_panel_visibility", "chart_area_visibility", "visual_structure", "annotations"] },
+    { "id": "chart_reconstruction", "name": "Chart data reconstruction", "output": ["readable_price_labels", "axis_scale", "reconstructed_ohlc", "missing_data"] },
+    { "id": "live_verification", "name": "Live market verification", "output": ["feed_status", "feed_timestamp", "screenshot_quote_comparison", "warnings"] },
+    { "id": "ict_evaluation", "name": "ICT analysis and model evaluation", "output": ["candidate_setups", "direction", "entry", "invalidation", "targets", "score", "reasons"] },
+    { "id": "final_report", "name": "Final report and chart annotation", "output": ["decision", "levels", "annotations", "stage_timings", "errors"] }
+  ]
+}

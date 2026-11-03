@@ -4,19 +4,21 @@ import io
 import json
 import secrets
 import uuid
+import time
+from typing import Any, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Depends, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from .config import (APP_NAME, STATIC_DIR, UPLOAD_DIR, MAX_UPLOAD_MB, GEMINI_API_KEY, DEEPSEEK_API_KEY, FORCE_SIGNAL,
-                     APP_USER, APP_PASSWORD, TWELVEDATA_API_KEY, AUTO_TRACK, AUTO_TRACK_SECONDS)
+                     IMAGE_FORCE_SIGNAL, ICT_MIN_SCORE, APP_USER, APP_PASSWORD, TWELVEDATA_API_KEY, AUTO_TRACK, AUTO_TRACK_SECONDS)
 from .database import Base, engine, SessionLocal, AnalysisRecord
 from .ai_service import analyze_images, chat_with_deepseek, analyze_live_market_with_deepseek, chat_with_live_market
 from .live_market import fetch_live_market, calculate_live_scan
@@ -24,6 +26,10 @@ from .trade_engine import build_trade_read
 from .schemas import ChatRequest, OutcomeRequest
 from . import ict_routes, news_routes, symbols
 from .tracker import run_tracker_once
+from . import ict_engine
+from .market_data import TFS, fetch_candles
+
+IMAGE_ANALYSIS_SPEC = json.loads((Path(__file__).resolve().parent.parent / "shared" / "image-analysis-spec.json").read_text(encoding="utf-8"))
 
 app = FastAPI(title=APP_NAME, version="2.0.0", description="XAUUSD live market terminal, ICT engine + AI mentor, and separate screenshot chart analyzer")
 app.include_router(ict_routes.router)
@@ -81,30 +87,131 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
-def _load_image(upload: UploadFile, raw: bytes) -> tuple[str, dict]:
+def _load_image(
+    upload: UploadFile,
+    raw: bytes,
+    analysis_raw: bytes | None = None,
+    preparation: dict | None = None,
+) -> tuple[str, dict, dict]:
     if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"Each image must be under {MAX_UPLOAD_MB} MB.")
     try:
         with Image.open(io.BytesIO(raw)) as source:
             if source.format not in {"PNG", "JPEG", "WEBP"}:
                 raise HTTPException(status_code=415, detail="Use PNG, JPG/JPEG or WEBP chart screenshots.")
-            image = ImageOps.exif_transpose(source).convert("RGB")
-            if image.width < 320 or image.height < 200:
-                raise HTTPException(status_code=400, detail="The chart image is too small. Upload a clearer screenshot (at least 320×200).")
-            # Preserve a good local screenshot while bounding upload/storage/API size.
-            stored = image.copy()
-            stored.thumbnail((2200, 1600), Image.Resampling.LANCZOS)
-            filename = f"{uuid.uuid4().hex}.jpg"
-            out_path = UPLOAD_DIR / filename
-            stored.save(out_path, "JPEG", quality=91, optimize=True)
-            api_image = image.copy()
-            api_image.thumbnail((1500, 1200), Image.Resampling.LANCZOS)
-            stream = io.BytesIO()
-            api_image.save(stream, "JPEG", quality=87, optimize=True)
-            payload = {"mime_type": "image/jpeg", "base64": __import__("base64").b64encode(stream.getvalue()).decode("ascii")}
-            return filename, payload
-    except UnidentifiedImageError as exc:
+            source.verify()
+        with Image.open(io.BytesIO(raw)) as source:
+            image = ImageOps.exif_transpose(source)
+            source_width, source_height = image.size
+            if source_width < IMAGE_ANALYSIS_SPEC["normalization"]["minimum_width"] or source_height < IMAGE_ANALYSIS_SPEC["normalization"]["minimum_height"]:
+                raise HTTPException(status_code=400, detail="The chart image is too small. Upload at least 320×200 pixels.")
+            image_format = source.format
+        ext = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}[image_format]
+        filename = f"{uuid.uuid4().hex}.{ext}"
+
+        warnings = []
+        ratio = source_width / source_height
+        policy = IMAGE_ANALYSIS_SPEC["normalization"]
+        unusual_ratio = ratio < policy["unusual_aspect_ratio_below"] or ratio > policy["unusual_aspect_ratio_above"]
+        if unusual_ratio:
+            warnings.append("Unusual image aspect ratio; chart visibility should be reviewed.")
+
+        if analysis_raw:
+            if len(analysis_raw) > MAX_UPLOAD_MB * 1024 * 1024:
+                raise HTTPException(status_code=413, detail=f"Each normalized image must be under {MAX_UPLOAD_MB} MB.")
+            with Image.open(io.BytesIO(analysis_raw)) as normalized:
+                if normalized.format != "JPEG":
+                    raise HTTPException(status_code=415, detail="Normalized analysis images must be JPEG.")
+                normalized.verify()
+            with Image.open(io.BytesIO(analysis_raw)) as normalized:
+                normalized_width, normalized_height = normalized.size
+                if (normalized_width < policy["minimum_width"] or normalized_height < policy["minimum_height"]
+                    or max(normalized_width, normalized_height) > policy["max_dimension"]):
+                    raise HTTPException(status_code=400, detail="Normalized image dimensions do not match the shared preparation policy.")
+                if abs((normalized_width / normalized_height) - ratio) > max(0.01, ratio * 0.02):
+                    raise HTTPException(status_code=400, detail="Normalized image aspect ratio changed; stretched images are not accepted.")
+            payload_bytes = analysis_raw
+            mode = "browser_canvas" if (preparation or {}).get("mode") == "browser_canvas" else "provided_normalized_image"
+        else:
+            with Image.open(io.BytesIO(raw)) as source:
+                image = ImageOps.exif_transpose(source)
+                if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+                    rgba = image.convert("RGBA")
+                    background = Image.new("RGB", rgba.size, policy["background"])
+                    background.paste(rgba, mask=rgba.getchannel("A"))
+                    image = background
+                else:
+                    image = image.convert("RGB")
+                image.thumbnail((policy["max_dimension"], policy["max_dimension"]), Image.Resampling.LANCZOS)
+                stream = io.BytesIO()
+                image.save(stream, "JPEG", quality=round(policy["jpeg_quality"] * 100), optimize=True)
+                payload_bytes = stream.getvalue()
+                normalized_width, normalized_height = image.size
+            mode = "server_fallback"
+            warnings.append("Browser-normalized analysis image was not provided; server fallback normalization was used.")
+
+        metadata = {
+            "mode": mode,
+            "source_format": image_format,
+            "source_width": source_width,
+            "source_height": source_height,
+            "source_bytes": len(raw),
+            "normalized_format": "image/jpeg",
+            "normalized_width": normalized_width,
+            "normalized_height": normalized_height,
+            "normalized_bytes": len(payload_bytes),
+            "aspect_ratio": round(ratio, 5),
+            "unusual_aspect_ratio": unusual_ratio,
+            "orientation_applied": True,
+            "blur_risk": (preparation or {}).get("blur_risk", "unavailable"),
+            "glare_risk": (preparation or {}).get("glare_risk", "not_assessed"),
+            "crop_risk": (preparation or {}).get("crop_risk", "not_assessed"),
+            "exif_orientation": (preparation or {}).get("exif_orientation"),
+            "color_space": (preparation or {}).get("color_space", policy["color_space"]),
+            "browser_quality": preparation or {},
+            "decode_verified": True,
+            "warnings": warnings,
+        }
+        (UPLOAD_DIR / filename).write_bytes(raw)
+        return filename, {"mime_type": "image/jpeg", "base64": base64.b64encode(payload_bytes).decode("ascii")}, metadata
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise HTTPException(status_code=415, detail="That file is not a readable chart image.") from exc
+
+
+class AnalysisProgress:
+    def __init__(self, send: Callable[[dict], Awaitable[None]] | None = None):
+        self.stages: list[dict] = []
+        self.current: dict | None = None
+        self.started = 0.0
+        self.send = send
+
+    async def start(self, stage_id: str, inputs: dict) -> None:
+        stage_spec = next(item for item in IMAGE_ANALYSIS_SPEC["stages"] if item["id"] == stage_id)
+        self.current = {
+            "id": stage_id, "name": stage_spec["name"], "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(), "duration_ms": None,
+            "input": inputs, "output": None, "error": None,
+        }
+        self.started = time.perf_counter()
+        self.stages.append(self.current)
+        if self.send:
+            await self.send({"type": "stage", "stage": dict(self.current)})
+
+    async def finish(self, output: dict) -> None:
+        if self.current is None:
+            return
+        self.current.update(status="complete", duration_ms=round((time.perf_counter() - self.started) * 1000, 2), output=output)
+        if self.send:
+            await self.send({"type": "stage", "stage": dict(self.current)})
+        self.current = None
+
+    async def fail(self, error: Exception) -> None:
+        if self.current is None:
+            return
+        self.current.update(status="failed", duration_ms=round((time.perf_counter() - self.started) * 1000, 2), error=str(error)[:350])
+        if self.send:
+            await self.send({"type": "stage", "stage": dict(self.current)})
+        self.current = None
 
 @app.get("/")
 def index() -> FileResponse:
@@ -125,17 +232,30 @@ def health(db: Session = Depends(get_db)) -> dict:
     return {"app": APP_NAME, "database": database,
             "providers": {"gemini_configured": bool(GEMINI_API_KEY), "deepseek_configured": bool(DEEPSEEK_API_KEY), "twelvedata_configured": bool(TWELVEDATA_API_KEY)},
             "auth_enabled": bool(APP_PASSWORD), "auto_track": AUTO_TRACK,
-            "mode": "live-market-and-image-analysis", "symbol": "XAUUSD", "symbols": list(symbols.PROFILES), "force_signal": FORCE_SIGNAL,
-            "live_market_provider": "Yahoo Finance XAUUSD=X", "live_terminal": True}
+            "mode": "live-market-and-image-analysis", "symbol": "XAUUSD", "symbols": list(symbols.PROFILES),
+            "force_signal": FORCE_SIGNAL, "image_force_signal": IMAGE_FORCE_SIGNAL,
+            "live_market_provider": ("Twelve Data with Yahoo Finance fallback" if TWELVEDATA_API_KEY
+                                     else "Yahoo Finance XAUUSD=X"), "live_terminal": True}
 
-@app.post("/api/analyze")
-async def analyze(
-    primary_image: UploadFile = File(...),
-    secondary_image: UploadFile = File(...),
-    tf_primary: str = Form("M1"),
-    tf_secondary: str = Form("M5"),
-    symbol: str = Form("XAUUSD"),
-    db: Session = Depends(get_db),
+
+
+
+@app.get("/api/image-analysis-spec")
+def image_analysis_spec() -> dict:
+    return IMAGE_ANALYSIS_SPEC
+
+
+async def _run_image_analysis(
+    primary_image: UploadFile,
+    secondary_image: UploadFile,
+    tf_primary: str,
+    tf_secondary: str,
+    symbol: str,
+    primary_analysis_image: UploadFile | None,
+    secondary_analysis_image: UploadFile | None,
+    image_preparation: str,
+    db: Session,
+    progress: AnalysisProgress,
 ) -> dict:
     try:
         symbol = symbols.normalize(symbol)
@@ -145,44 +265,345 @@ async def analyze(
     tf_primary, tf_secondary = tf_primary.upper(), tf_secondary.upper()
     if tf_primary not in allowed_tfs or tf_secondary not in allowed_tfs or tf_primary == tf_secondary:
         raise HTTPException(status_code=400, detail="Choose two different supported timeframes.")
-    raw_1, raw_2 = await primary_image.read(), await secondary_image.read()
-    if not raw_1 or not raw_2:
-        raise HTTPException(status_code=400, detail="Upload both timeframe screenshots before analyzing.")
-    name_1, image_1 = _load_image(primary_image, raw_1)
-    name_2, image_2 = _load_image(secondary_image, raw_2)
+
     try:
-        ai_results = await analyze_images([image_1, image_2], tf_primary, tf_secondary, symbol)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    provider_results = ai_results.get("provider_results", [])
-    provider_errors = ai_results.get("provider_errors", {})
-    if not provider_results:
-        errors = " | ".join(f"{k}: {v}" for k, v in provider_errors.items())
-        raise HTTPException(status_code=502, detail="All configured AI providers failed. " + (errors or "Check API keys/model names."))
-    analysis = build_trade_read(provider_results, provider_errors, tf_primary, tf_secondary, symbol)
-    analysis["provider_errors"] = provider_errors
-    record = AnalysisRecord(
-        created_at=datetime.now(timezone.utc), symbol=symbol, tf_primary=tf_primary, tf_secondary=tf_secondary,
-        direction=analysis["direction"], confidence=float(analysis.get("confidence", 0)),
-        entry_low=analysis.get("entry_low"), entry_high=analysis.get("entry_high"), stop_loss=analysis.get("stop_loss"),
-        take_profit_1=analysis.get("take_profit_1"), take_profit_2=analysis.get("take_profit_2"),
-        image_primary=name_1, image_secondary=name_2, payload_json=json.dumps(analysis, ensure_ascii=False),
-    )
-    try:
-        db.add(record)
-        db.commit()
-        db.refresh(record)
+        preparation = json.loads(image_preparation) if image_preparation else {}
+        if not isinstance(preparation, list) or len(preparation) != 2:
+            preparation = [{}, {}]
+        await progress.start("image_intake", {"symbol": symbol, "timeframes": [tf_primary, tf_secondary]})
+        raw_1, raw_2 = await primary_image.read(), await secondary_image.read()
+        if not raw_1 or not raw_2:
+            raise HTTPException(status_code=400, detail="Upload both timeframe screenshots before analyzing.")
+        normalized_1 = await primary_analysis_image.read() if primary_analysis_image else None
+        normalized_2 = await secondary_analysis_image.read() if secondary_analysis_image else None
+        name_1, image_1, quality_1 = _load_image(primary_image, raw_1, normalized_1, preparation[0])
+        name_2, image_2, quality_2 = _load_image(secondary_image, raw_2, normalized_2, preparation[1])
+        image_quality = [quality_1, quality_2]
+        await progress.finish({"images": image_quality, "originals_preserved": True})
+
+        await progress.start("visual_extraction", {"providers": ["Gemini", "DeepSeek"], "image_count": 2})
+        try:
+            ai_results = await analyze_images([image_1, image_2], tf_primary, tf_secondary, symbol)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        provider_results = ai_results.get("provider_results", [])
+        provider_errors = ai_results.get("provider_errors", {})
+        if not provider_results:
+            errors = " | ".join(f"{key}: {value}" for key, value in provider_errors.items())
+            raise HTTPException(status_code=502, detail="All configured AI providers failed. " + (errors or "Check API keys/model names."))
+        visual_quality = []
+        for index, timeframe in enumerate((tf_primary, tf_secondary)):
+            observations = []
+            for result in provider_results:
+                reads = result.get("chart_reads")
+                read = reads[index] if isinstance(reads, list) and len(reads) > index and isinstance(reads[index], dict) else {}
+                observations.append({
+                    "provider": str(result.get("provider", "unknown")),
+                    **{field: read.get(field) for field in (
+                        "symbol_header_visible", "timeframe_label_visible", "chart_area_visibility",
+                        "price_axis_visibility", "indicator_panel_visibility", "glare", "rotated",
+                        "cropped", "blur_risk",
+                    )},
+                })
+            visual_quality.append({"timeframe": timeframe, "observations": observations})
+        await progress.finish({
+            "providers_succeeded": [str(item.get("provider", "unknown")) for item in provider_results],
+            "provider_errors": provider_errors,
+            "chart_reads": sum(len(item.get("chart_reads", [])) for item in provider_results),
+            "visual_quality": visual_quality,
+        })
+
+        await progress.start("chart_reconstruction", {"timeframes": [tf_primary, tf_secondary]})
+        reconstruction = []
+        for index, timeframe in enumerate((tf_primary, tf_secondary)):
+            reads = [
+                (result.get("chart_reads") or [])[index]
+                for result in provider_results
+                if isinstance(result.get("chart_reads"), list) and len(result["chart_reads"]) > index
+            ]
+            reconstruction.append({
+                "timeframe": timeframe,
+                "readable_price_labels": [
+                    read.get("current_price") for read in reads
+                    if read.get("current_price_readable") is True and isinstance(read.get("current_price"), (int, float))
+                ],
+                "axis_scale": [
+                    {"top": read.get("price_scale_top"), "bottom": read.get("price_scale_bottom"),
+                     "readable": read.get("price_scale_readable") is True}
+                    for read in reads
+                ],
+                "reconstructed_ohlc": None,
+                "missing_data": ["OHLC candles are not reconstructed from screenshot pixels; use validated market-feed candles."],
+            })
+        await progress.finish({"charts": reconstruction})
+
+        await progress.start("live_verification", {"requested_timeframes": [tf_primary, tf_secondary]})
+        supported_frames = [tf for tf in dict.fromkeys((tf_primary, tf_secondary)) if tf in TFS]
+        fetches = await asyncio.gather(
+            *(fetch_candles(tf, symbol=symbol) for tf in supported_frames),
+            return_exceptions=True,
+        )
+        feeds, feed_errors = {}, {}
+        for timeframe, result in zip(supported_frames, fetches):
+            if isinstance(result, Exception):
+                feed_errors[timeframe] = str(result)[:260]
+            else:
+                feeds[timeframe] = result
+        comparisons = []
+        profile = symbols.profile(symbol)
+        for index, timeframe in enumerate((tf_primary, tf_secondary)):
+            feed = feeds.get(timeframe)
+            screenshot_values = [
+                (result.get("chart_reads") or [])[index]
+                for result in provider_results
+                if isinstance(result.get("chart_reads"), list) and len(result["chart_reads"]) > index
+            ]
+            screenshot_price = next((
+                float(read["current_price"]) for read in screenshot_values
+                if read.get("current_price_readable") is True
+                and isinstance(read.get("current_price"), (int, float))
+            ), None)
+            live_price = float(feed["price"]) if feed else None
+            if not feed:
+                comparison = "feed_unavailable"
+            elif screenshot_price is None:
+                comparison = "screenshot_quote_unreadable"
+            elif abs(screenshot_price - live_price) <= max(profile["price_abs"], live_price * profile["price_pct"]):
+                comparison = "match"
+            else:
+                comparison = "mismatch"
+            comparisons.append({
+                "timeframe": timeframe, "status": comparison, "screenshot_price": screenshot_price,
+                "live_price": live_price, "feed_timestamp": feed.get("last_bar_time") if feed else None,
+                "feed_source": feed.get("source") if feed else None,
+                "is_stale": feed.get("is_stale") if feed else None,
+                "market_closed": feed.get("market_closed") if feed else None,
+                "data_quality_status": feed.get("data_quality_status") if feed else None,
+            })
+        market_verification = {
+            "available": len(feeds) == 2,
+            "feeds": comparisons,
+            "errors": feed_errors,
+            "warning": "Screenshot prices are visual reads; live prices come only from the stated candle feed.",
+        }
+        await progress.finish(market_verification)
+
+        await progress.start("ict_evaluation", {"entry_timeframe": tf_primary, "minimum_score": ICT_MIN_SCORE})
+        market_scan = None
+        scan_error = None
+        if tf_primary not in feeds:
+            scan_error = feed_errors.get(tf_primary, "Entry timeframe is unsupported by the configured market-data providers.")
+        elif len(feeds[tf_primary]["bars"]) < ict_engine.SPEC["scanner"]["minimum_candles"]:
+            scan_error = f"Not enough completed {tf_primary} candles for a validated ICT scan."
+        else:
+            try:
+                market_scan = ict_engine.scan(
+                    {tf: feed["bars"] for tf, feed in feeds.items()},
+                    tf_primary,
+                    symbol,
+                )
+            except (ValueError, RuntimeError) as exc:
+                scan_error = str(exc)[:260]
+        await progress.finish({
+            "status": "scanned" if market_scan else "unavailable",
+            "candidate_count": len(market_scan.get("setups", [])) if market_scan else 0,
+            "selected_setup": market_scan.get("selected") if market_scan else None,
+            "direction": market_scan.get("direction", "WAIT") if market_scan else "WAIT",
+            "error": scan_error,
+            "source": "completed market-feed candles; deterministic ICT engine",
+        })
+
+        await progress.start("final_report", {"annotation_source": "visual evidence only", "trade_levels_source": "validated market candles only"})
+        analysis = build_trade_read(provider_results, provider_errors, tf_primary, tf_secondary, symbol)
+        candidate = None
+        if market_scan and market_scan.get("selected"):
+            candidate = next((setup for setup in market_scan["setups"]
+                              if setup.get("id") == market_scan["selected"]
+                              and setup.get("timeframe") == tf_primary), None)
+        feed_quality_ok = all(
+            timeframe in feeds
+            and not feeds[timeframe]["is_stale"]
+            and not feeds[timeframe]["market_closed"]
+            and feeds[timeframe]["data_quality_status"] == "GOOD"
+            for timeframe in (tf_primary, tf_secondary)
+        )
+        normalization_ok = all(item["mode"] == "browser_canvas" for item in image_quality)
+        quote_mismatch = any(item["status"] == "mismatch" for item in comparisons)
+        detected_other_symbol = any(
+            read.get("symbol_detected") not in (None, "", "unknown", symbol)
+            and not symbols.matches(str(read.get("symbol_detected")), symbol)
+            for result in provider_results
+            for read in (result.get("chart_reads") or [])
+        )
+        trade_ready = bool(candidate and feed_quality_ok and normalization_ok and not quote_mismatch and not detected_other_symbol)
+        plan = candidate.get("plan") if trade_ready and candidate else None
+        direction = candidate.get("action", "WAIT") if trade_ready and candidate else "WAIT"
+        analysis.update({
+            "symbol": symbol,
+            "mode": "LIVE_MARKET_VERIFIED" if len(feeds) == 2 else "IMAGE_ONLY",
+            "direction": direction,
+            "model_bias": direction,
+            "trade_ready": trade_ready,
+            "forced_signal": False,
+            "force_signal_used": False,
+            "levels_available": bool(plan),
+            "signal_status": "ICT_SETUP_VALIDATED" if trade_ready else "WAIT_FOR_CONFIRMATION",
+            "entry_price": plan.get("entry") if plan else None,
+            "entry_low": plan.get("entry_low") if plan else None,
+            "entry_high": plan.get("entry_high") if plan else None,
+            "stop_loss": plan.get("stop") if plan else None,
+            "take_profit_1": plan.get("tp1") if plan else None,
+            "take_profit_2": plan.get("tp2") if plan else None,
+            "atr_method": "No ATR-derived plan. Entry, structural invalidation and liquidity targets come from a validated ICT setup on completed market candles.",
+            "price_source": "Live candle feed" if plan else "Screenshot values are not live quotes.",
+            "market_verification": market_verification,
+            "market_ict_scan": {
+                "candidate_count": len(market_scan.get("setups", [])) if market_scan else 0,
+                "selected_setup": candidate,
+                "error": scan_error,
+                "trade_blockers": [
+                    *(["market feed is stale, closed, missing, or degraded"] if not feed_quality_ok else []),
+                    *(["images were not prepared by the shared browser normalizer"] if not normalization_ok else []),
+                    *(["screenshot quote does not match the live candle"] if quote_mismatch else []),
+                    *(["image symbol conflicts with the user-selected symbol"] if detected_other_symbol else []),
+                    *(["no valid ICT setup on the selected entry timeframe"] if not candidate else []),
+                ],
+            },
+            "pipeline_stages": progress.stages,
+            "force_settings": {"live_terminal_force_signal": FORCE_SIGNAL, "image_force_signal": IMAGE_FORCE_SIGNAL},
+        })
+        if plan:
+            analysis["confidence"] = candidate.get("score", 0)
+            analysis["setup_rationale"] = "Validated market-candle ICT setup: " + "; ".join(candidate.get("reasons", []))
+            for read in analysis.get("chart_reads", []):
+                scale = read.get("price_scale", {})
+                if scale.get("verified"):
+                    for label, value in (("ENTRY", plan["entry"]), ("SL", plan["stop"]), ("TP1", plan["tp1"]), ("TP2", plan["tp2"])):
+                        if scale["bottom"] <= value <= scale["top"]:
+                            read.setdefault("annotations", []).append({"type": "price_line", "price": value, "label": f"{label} {value:.2f}"})
+        else:
+            analysis["risk_notes"] = list(dict.fromkeys([
+                *analysis.get("risk_notes", []),
+                "No actionable trade levels were issued. Review the pipeline stage outputs and trade blockers.",
+            ]))
+        analysis["provider_errors"] = provider_errors
+        analysis["chart_reconstruction"] = reconstruction
+        analysis["live_feeds"] = comparisons
+
+        record = AnalysisRecord(
+            created_at=datetime.now(timezone.utc), symbol=symbol, tf_primary=tf_primary, tf_secondary=tf_secondary,
+            direction=analysis["direction"], confidence=float(analysis.get("confidence", 0)),
+            entry_low=analysis.get("entry_low"), entry_high=analysis.get("entry_high"), stop_loss=analysis.get("stop_loss"),
+            take_profit_1=analysis.get("take_profit_1"), take_profit_2=analysis.get("take_profit_2"),
+            image_primary=name_1, image_secondary=name_2, payload_json=json.dumps(analysis, ensure_ascii=False),
+        )
+        history_saved, history_error = True, None
+        try:
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+        except Exception as exc:
+            db.rollback()
+            history_saved, history_error = False, str(exc)[:300]
+        await progress.finish({"decision": direction, "trade_ready": trade_ready, "history_saved": history_saved})
+        analysis["pipeline_stages"] = progress.stages
+        if history_saved:
+            record.payload_json = json.dumps(analysis, ensure_ascii=False)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                history_saved = False
+                history_error = "Analysis was saved, but its final stage metadata could not be updated."
+        return {
+            "id": record.id if history_saved else None,
+            "created_at": record.created_at.isoformat(),
+            "symbol": symbol,
+            "tf_primary": tf_primary,
+            "tf_secondary": tf_secondary,
+            "direction": analysis["direction"],
+            "confidence": analysis.get("confidence", 0),
+            "entry_low": analysis.get("entry_low"),
+            "entry_high": analysis.get("entry_high"),
+            "stop_loss": analysis.get("stop_loss"),
+            "take_profit_1": analysis.get("take_profit_1"),
+            "take_profit_2": analysis.get("take_profit_2"),
+            "image_primary": name_1,
+            "image_secondary": name_2,
+            "image_primary_url": f"/uploads/{name_1}",
+            "image_secondary_url": f"/uploads/{name_2}",
+            "history_saved": history_saved,
+            "history_error": history_error,
+            "analysis": analysis,
+        }
     except Exception as exc:
-        db.rollback()
-        # The analysis has completed; provide an explicit persistence warning instead of throwing away the read.
-        return {"id": None, "created_at": datetime.now(timezone.utc).isoformat(), "tf_primary": tf_primary,
-                "tf_secondary": tf_secondary, "image_primary": name_1, "image_secondary": name_2,
-                "image_primary_url": f"/uploads/{name_1}", "image_secondary_url": f"/uploads/{name_2}",
-                "history_saved": False, "history_error": str(exc)[:300], "analysis": analysis}
-    return {"id": record.id, "created_at": record.created_at.isoformat(), "tf_primary": tf_primary,
-            "tf_secondary": tf_secondary, "image_primary": name_1, "image_secondary": name_2,
-            "image_primary_url": f"/uploads/{name_1}", "image_secondary_url": f"/uploads/{name_2}",
-            "history_saved": True, "analysis": analysis}
+        await progress.fail(exc)
+        raise
+
+
+@app.post("/api/analyze")
+async def analyze(
+    primary_image: UploadFile = File(...),
+    secondary_image: UploadFile = File(...),
+    tf_primary: str = Form("M1"),
+    tf_secondary: str = Form("M5"),
+    symbol: str = Form("XAUUSD"),
+    primary_analysis_image: UploadFile | None = File(default=None),
+    secondary_analysis_image: UploadFile | None = File(default=None),
+    image_preparation: str = Form("[]"),
+    db: Session = Depends(get_db),
+) -> dict:
+    return await _run_image_analysis(
+        primary_image, secondary_image, tf_primary, tf_secondary, symbol,
+        primary_analysis_image, secondary_analysis_image, image_preparation, db, AnalysisProgress(),
+    )
+
+
+@app.post("/api/analyze/stream")
+async def analyze_stream(
+    primary_image: UploadFile = File(...),
+    secondary_image: UploadFile = File(...),
+    tf_primary: str = Form("M1"),
+    tf_secondary: str = Form("M5"),
+    symbol: str = Form("XAUUSD"),
+    primary_analysis_image: UploadFile | None = File(default=None),
+    secondary_analysis_image: UploadFile | None = File(default=None),
+    image_preparation: str = Form("[]"),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    async def events():
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+        async def send(event: dict) -> None:
+            await queue.put(event)
+
+        async def run() -> None:
+            try:
+                result = await _run_image_analysis(
+                    primary_image, secondary_image, tf_primary, tf_secondary, symbol,
+                    primary_analysis_image, secondary_analysis_image, image_preparation, db, AnalysisProgress(send),
+                )
+                await queue.put({"type": "complete", "data": result})
+            except HTTPException as exc:
+                await queue.put({"type": "error", "status": exc.status_code, "detail": exc.detail})
+            except Exception as exc:
+                await queue.put({"type": "error", "status": 500, "detail": str(exc)[:350]})
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 @app.get("/api/live-market")
 async def live_market(interval: str = Query(default="1m")) -> dict:

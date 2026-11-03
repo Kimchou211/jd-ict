@@ -125,7 +125,7 @@ test("Worker exposes ICT candle and scan routes and saves scan history through N
     assert.equal(candles.status, 200);
     const candleBody = await candles.json() as { feed: { tf: string }; bars: unknown[] };
     assert.equal(candleBody.feed.tf, "M5");
-    assert.equal(candleBody.bars.length, 120);
+    assert.equal(candleBody.bars.length, 119);
 
     const scan = await worker.fetch(new Request("https://example.test/api/ict/scan?tf=M5&symbol=XAUUSD&ai=false", {
       method: "POST",
@@ -138,12 +138,24 @@ test("Worker exposes ICT candle and scan routes and saves scan history through N
     const scanBody = await scan.json() as {
       id: number;
       history_saved: boolean;
-      analysis: { ict_scan: boolean; feed: { tf: string }; final_direction: string };
+      analysis: {
+        ict_scan: boolean;
+        feed: { tf: string };
+        final_direction: string;
+        scanner_status: string;
+        coverage: Record<string, { status: string }>;
+        model_registry: Array<{ id: string }>;
+        setup_lifecycle_history: unknown[];
+      };
     };
     assert.equal(scanBody.id, 57);
     assert.equal(scanBody.history_saved, true);
     assert.equal(scanBody.analysis.ict_scan, true);
     assert.equal(scanBody.analysis.feed.tf, "M5");
+    assert.ok(["SETUPS_FOUND", "NO_VALID_SETUP"].includes(scanBody.analysis.scanner_status));
+    assert.deepEqual(Object.keys(scanBody.analysis.coverage).sort(), ["D1", "H1", "H4", "M1", "M15", "M5", "W1"]);
+    assert.equal(scanBody.analysis.model_registry.length, 19);
+    assert.ok(Array.isArray(scanBody.analysis.setup_lifecycle_history));
     assert.ok(["BUY", "SELL", "WAIT"].includes(scanBody.analysis.final_direction));
     const insert = db.queries.find(({ query }) => query.trimStart().startsWith("INSERT INTO analysis_records"));
     assert.ok(insert);
@@ -335,11 +347,32 @@ test("image analysis honors selected symbol and keeps R2 uploads and Neon histor
     } as never);
     assert.equal(response.status, 200);
     const body = await response.json() as {
+      symbol: string;
+      direction: string;
+      confidence: number;
       history_saved: boolean;
-      analysis: { symbol: string; confidence: number; providers: Array<{ confidence: number }>; chart_reads: Array<{ annotations: Array<Record<string, unknown>> }> };
+      analysis: {
+        symbol: string;
+        confidence: number;
+        direction: string;
+        levels_available: boolean;
+        forced_signal: boolean;
+        pipeline_stages: Array<{ id: string; status: string }>;
+        providers: Array<{ confidence: number }>;
+        chart_reads: Array<{ annotations: Array<Record<string, unknown>> }>;
+      };
     };
+    assert.equal(body.symbol, body.analysis.symbol);
+    assert.equal(body.direction, body.analysis.direction);
+    assert.equal(body.confidence, body.analysis.confidence);
     assert.equal(body.analysis.symbol, "BTCUSD");
     assert.equal(body.analysis.confidence, 1);
+    assert.equal(body.analysis.direction, "WAIT");
+    assert.equal(body.analysis.levels_available, false);
+    assert.equal(body.analysis.forced_signal, false);
+    assert.deepEqual(body.analysis.pipeline_stages.map(stage => stage.id), [
+      "image_intake", "visual_extraction", "chart_reconstruction", "live_verification", "ict_evaluation", "final_report",
+    ]);
     assert.equal(body.analysis.providers[0].confidence, 1);
     assert.equal(body.analysis.chart_reads[0].timeframe, "M15");
     assert.equal(body.analysis.chart_reads[1].timeframe, "H1");
@@ -356,7 +389,7 @@ test("image analysis honors selected symbol and keeps R2 uploads and Neon histor
 });
 
 test("ICT routes reject unsupported timeframes instead of returning 404", async () => {
-  const response = await worker.fetch(new Request("https://example.test/api/ict/scan?tf=H1&ai=false", {
+  const response = await worker.fetch(new Request("https://example.test/api/ict/scan?tf=M2&ai=false", {
     method: "POST",
     headers: authHeaders(),
   }), env("") as never);

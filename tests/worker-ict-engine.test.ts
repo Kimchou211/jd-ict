@@ -22,7 +22,7 @@ function bearishSetupBars() {
   const points: Array<[number, number]> = [[0, 4000], [12, 4009], [24, 4003], [36, 4010], [44, 4004], [51, 4009.5]];
   const rows: Array<[number, number, number, number, number]> = [[0, 4000, 4000.3, 3999.7, 4000], ...linear(points)];
   rows.push(
-    [52, 4009.5, 4011, 4008.8, 4008],
+    [52, 4009.5, 4011, 4007.8, 4008],
     [53, 4008, 4008.2, 4002.2, 4002.5],
     [54, 4002.5, 4002.7, 3996.8, 3997],
     [55, 3997, 3997.5, 3993.8, 3994],
@@ -36,6 +36,19 @@ function bearishSetupBars() {
   return rows.map(([i, open, high, low, close]) => ({
     timestamp_ms: start + i * 300_000, open, high, low, close,
   }));
+}
+
+function hourlyPeriodHistory(missingDays = new Set<number>()) {
+  const start = Date.UTC(2026, 2, 1), end = Date.UTC(2026, 3, 2), bars = [];
+  for (let timestamp = start; timestamp < end; timestamp += 3_600_000) {
+    const date = new Date(timestamp).getUTCDate();
+    const weekday = new Date(timestamp).getUTCDay();
+    if (weekday === 0 || weekday === 6 || (new Date(timestamp).getUTCMonth() === 2 && missingDays.has(date))) continue;
+    const hour = (timestamp - start) / 3_600_000;
+    const price = 2400 + (hour % 48) * 0.1;
+    bars.push({ timestamp_ms: timestamp, open: price, high: price + 0.2, low: price - 0.2, close: price + 0.05 });
+  }
+  return bars;
 }
 
 test("ICT scan detects a sweep, bearish MSS and geometrically valid retracement plan", () => {
@@ -52,6 +65,41 @@ test("ICT scan detects a sweep, bearish MSS and geometrically valid retracement 
   assert.ok(plan.entry_low > plan.tp1 && plan.tp1 > plan.tp2);
   assert.ok(plan.rr1 >= 1.5);
   assert.ok((result.drawings as Array<Record<string, unknown>>).some(drawing => drawing.type === "plan"));
+});
+
+test("scanner runs enabled model detectors across eligible timeframes and filters candidates", () => {
+  const bars = bearishSetupBars();
+  const feeds = { M5: bars, M15: bars };
+  const result = scanIct(feeds, "M5", "XAUUSD");
+  const repeated = scanIct(feeds, "M5", "XAUUSD");
+  assert.equal(result.coverage?.M5?.status, "SCANNED");
+  assert.equal(result.coverage?.M15?.status, "SCANNED");
+  assert.deepEqual(result.setups.map(setup => setup.id), repeated.setups.map(setup => setup.id));
+  assert.deepEqual(new Set(result.setups.map(setup => setup.timeframe)), new Set(["M5", "M15"]));
+  assert.ok((result.unique_opportunity_count || 0) < (result.model_classification_count || 0));
+  const enabled = result.model_registry.filter(model => (model as { enabled?: boolean }).enabled);
+  assert.deepEqual(enabled.filter(model => (model as { available?: boolean }).available)
+    .map(model => (model as { id: string }).id).sort(),
+  ["ICT_2022", "LIQUIDITY_SWEEP_REVERSAL", "TURTLE_SOUP"]);
+
+  const filtered = scanIct(feeds, "M5", "XAUUSD", { filters: { model: "ICT_2022", direction: "SELL", timeframe: "M15" } });
+  assert.ok(filtered.setups.length > 0);
+  assert.ok(filtered.setups.every(setup => setup.model_id === "ICT_2022" && setup.timeframe === "M15"));
+});
+
+test("previous week and month levels require sufficient period coverage", () => {
+  const complete = scanIct({ H1: hourlyPeriodHistory() }, "H1", "XAUUSD");
+  const keys = Object.keys(complete.level_table);
+  assert.ok(keys.some(key => key.startsWith("PWH")));
+  assert.ok(keys.some(key => key.startsWith("PWL")));
+  assert.ok(keys.some(key => key.startsWith("PMH")));
+  assert.ok(keys.some(key => key.startsWith("PML")));
+
+  const missingWeekdays = new Set([2, 3, 4, 5, 6, 9, 10, 11, 12, 13]);
+  const limited = scanIct({ H1: hourlyPeriodHistory(missingWeekdays) }, "H1", "XAUUSD");
+  const limitedKeys = Object.keys(limited.level_table);
+  assert.ok(limitedKeys.some(key => key.startsWith("PWH")));
+  assert.ok(!limitedKeys.some(key => key.startsWith("PMH")));
 });
 
 test("ICT scan accepts supported BTC aliases and rejects insufficient history", () => {

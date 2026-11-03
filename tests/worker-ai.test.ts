@@ -55,7 +55,7 @@ function responseFor(provider: "Gemini" | "DeepSeek", result: JsonRecord): Respo
     : Response.json({ choices: [{ message: { content: JSON.stringify(result) } }] });
 }
 
-test("Gemini and DeepSeek receive the full forced prompts and screenshots in selected order", async () => {
+test("Gemini and DeepSeek receive evidence-only prompts and screenshots in selected order", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ provider: string; body: Record<string, unknown> }> = [];
   globalThis.fetch = async (input, init) => {
@@ -88,14 +88,13 @@ test("Gemini and DeepSeek receive the full forced prompts and screenshots in sel
 
     const geminiParts = ((calls[0].body.contents as Array<{ parts: Array<Record<string, unknown>> }>)[0]).parts;
     const geminiPrompt = geminiParts[0].text as string;
-    assert.match(geminiPrompt, /qualitative conviction/i);
-    assert.match(geminiPrompt, /NOT win probability/i);
-    assert.match(geminiPrompt, /30-55/);
-    assert.match(geminiPrompt, /70\+/);
-    assert.match(geminiPrompt, /ICT DRAWING MODE/);
+    assert.match(geminiPrompt, /chart-image evidence extractor/i);
+    assert.match(geminiPrompt, /do not make a trading decision/i);
+    assert.match(geminiPrompt, /do not reconstruct OHLC candles/i);
+    assert.doesNotMatch(geminiPrompt, /qualitative conviction|ICT DRAWING MODE/i);
     assert.match(geminiPrompt, /BTCUSD/);
     assert.doesNotMatch(geminiPrompt, /XAUUSD/);
-    assert.match(geminiPrompt, /first screenshot is M15; the second screenshot is H1/i);
+    assert.match(geminiPrompt, /user-provided timeframe labels are authoritative/i);
     assert.deepEqual(geminiParts.slice(1).map((part) => {
       if ("inline_data" in part) return (part.inline_data as { data: string }).data;
       return part.text;
@@ -105,10 +104,10 @@ test("Gemini and DeepSeek receive the full forced prompts and screenshots in sel
     const messages = deepseekBody.messages as Array<{ role: string; content: string | Array<Record<string, unknown>> }>;
     const deepseekSystem = messages.find((message) => message.role === "system")?.content as string;
     const deepseekUser = messages.find((message) => message.role === "user")?.content as Array<Record<string, unknown>>;
-    assert.match(deepseekSystem, /qualitative conviction/i);
-    assert.match(deepseekSystem, /30-55/);
-    assert.match(deepseekSystem, /70\+/);
-    assert.match(deepseekSystem, /ICT DRAWING MODE/);
+    assert.match(deepseekSystem, /chart-image evidence extractor/i);
+    assert.match(deepseekSystem, /do not make a trading decision/i);
+    assert.match(deepseekSystem, /do not reconstruct OHLC candles/i);
+    assert.doesNotMatch(deepseekSystem, /qualitative conviction|ICT DRAWING MODE/i);
     assert.match(deepseekSystem, /BTCUSD/);
     const imageUrls = deepseekUser.filter((part) => part.type === "image_url")
       .map((part) => ((part.image_url as { url: string }).url));
@@ -151,7 +150,10 @@ test("confidence 1 remains 1 and failed providers stay separately diagnosable", 
     const analysis = buildTradeRead(result.providerResults, result.providerErrors, ...timeframes, env, "BTCUSD");
     assert.equal(analysis.symbol, "BTCUSD");
     assert.equal(analysis.confidence, 1);
-    assert.equal(analysis.signal_status, "FORCED_SIGNAL");
+    assert.equal(analysis.direction, "WAIT");
+    assert.equal(analysis.signal_status, "PROVISIONAL_SINGLE_MODEL");
+    assert.equal(analysis.forced_signal, false);
+    assert.equal(analysis.force_signal_used, false);
     assert.equal(analysis.providers[0].confidence, 1);
     assert.equal(analysis.provider_status.DeepSeek.status, "failed");
     assert.match(analysis.provider_errors.DeepSeek, /DeepSeek API 503/);

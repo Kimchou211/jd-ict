@@ -1,6 +1,10 @@
+import asyncio
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import time
+from unittest.mock import patch
 
+from app import live_market
 from app.live_market import calculate_live_scan
 
 
@@ -28,6 +32,68 @@ def synthetic_market(direction="up", stale=False):
 
 
 class LiveMarketScanTests(unittest.TestCase):
+    def test_fetch_live_market_uses_shared_configured_feed(self):
+        source_feed = {
+            "source": "Twelve Data · XAU/USD",
+            "price": 2350,
+            "last_bar_time": "2026-10-13T00:00:00+00:00",
+            "last_bar_ms": 1791849600000,
+            "fetched_at": "2026-10-13T00:01:00+00:00",
+            "age_seconds": 30,
+            "is_stale": False,
+            "bars": synthetic_market()["bars"],
+            "fallback_reason": "Yahoo previously rate-limited",
+            "data_quality_status": "GOOD",
+        }
+
+        async def fake_fetch_candles(timeframe):
+            self.assertEqual(timeframe, "M1")
+            return source_feed
+
+        with patch.object(live_market, "fetch_candles", fake_fetch_candles):
+            result = asyncio.run(live_market.fetch_live_market("1m"))
+
+        self.assertEqual(result["source"], source_feed["source"])
+        self.assertEqual(result["feed_symbol"], "XAU/USD")
+        self.assertEqual(result["fallback_reason"], source_feed["fallback_reason"])
+        self.assertEqual(result["bars"], source_feed["bars"][-120:])
+
+    def test_fetch_live_market_rejects_unsupported_interval(self):
+        with self.assertRaisesRegex(ValueError, "Choose 1m, 5m, 15m or 60m"):
+            asyncio.run(live_market.fetch_live_market("2m"))
+
+    def test_cached_market_data_is_marked_stale_after_provider_failure(self):
+        from app import market_data
+
+        old_timestamp = int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp() * 1000)
+        cached_feed = {
+            "last_bar_ms": old_timestamp,
+            "last_bar_time": datetime.fromtimestamp(old_timestamp / 1000, timezone.utc).isoformat(),
+            "fetched_at": "old",
+            "age_seconds": 0,
+            "is_stale": False,
+            "source": "cached provider",
+            "bars": [],
+        }
+
+        class FailedClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return None
+
+            async def get(self, *_args, **_kwargs):
+                raise RuntimeError("provider unavailable")
+
+        with patch.object(market_data, "_CACHE", {"XAUUSD:M1": (time.monotonic() - 60, cached_feed)}):
+            with patch.object(market_data.httpx, "AsyncClient", lambda **_kwargs: FailedClient()):
+                result = asyncio.run(market_data.fetch_candles("M1", force=True))
+
+        self.assertTrue(result["is_stale"])
+        self.assertGreater(result["age_seconds"], 300)
+        self.assertIn("provider unavailable", result["fallback_reason"])
+
     def test_bullish_market_has_buy_candidate_and_risk_levels(self):
         result = calculate_live_scan(synthetic_market("up"))
         self.assertEqual(result["direction"], "BUY")

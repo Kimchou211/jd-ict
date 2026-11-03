@@ -14,6 +14,29 @@ def provider(name: str, confidence: int, pullback_zones: dict) -> dict:
 
 
 class PullbackZoneTests(unittest.TestCase):
+    def test_preserves_provider_image_quality_observations(self) -> None:
+        image_read = {
+            "timeframe": "M1",
+            "symbol_header_visible": True,
+            "timeframe_label_visible": False,
+            "chart_area_visibility": 0.8,
+            "price_axis_visibility": "partial",
+            "indicator_panel_visibility": "visible",
+            "glare": "possible",
+            "rotated": "no",
+            "cropped": "no",
+            "blur_risk": "low",
+        }
+        source = provider("Gemini", 75, {"BUY": {}, "SELL": {}})
+        source["chart_reads"] = [image_read, {}]
+        result = build_strict_read([source], {}, "M1", "M5")
+
+        observation = result["chart_reads"][0]["visual_observations"][0]
+        self.assertEqual(observation["provider"], "Gemini")
+        self.assertTrue(observation["symbol_header_visible"])
+        self.assertEqual(observation["price_axis_visibility"], "partial")
+        self.assertEqual(observation["glare"], "possible")
+
     def test_returns_buy_and_sell_zones_in_conditional_setups(self) -> None:
         result = build_strict_read(
             [

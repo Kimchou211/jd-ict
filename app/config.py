@@ -24,9 +24,10 @@ MAX_UPLOAD_MB = int(_env("MAX_UPLOAD_MB", "12"))
 CONFIDENCE_MINIMUM = int(_env("CONFIDENCE_MINIMUM", "65"))
 PRICE_AGREEMENT_ABSOLUTE = float(_env("PRICE_AGREEMENT_ABSOLUTE", "0.50"))
 ATR_AGREEMENT_PERCENT = float(_env("ATR_AGREEMENT_PERCENT", "0.20"))
-# FORCE_SIGNAL=true  -> return a best-effort direction when one can be inferred; not trade-ready.
-# FORCE_SIGNAL=false -> strict mode (returns WAIT when validation checks fail).
+# Retained for non-image/legacy configuration; screenshot analysis must use IMAGE_FORCE_SIGNAL.
 FORCE_SIGNAL = _env("FORCE_SIGNAL", "true").strip().lower() in ("1", "true", "yes", "on")
+# Screenshot analysis is independent from Live Terminal signal forcing.
+IMAGE_FORCE_SIGNAL = _env("IMAGE_FORCE_SIGNAL", "false").strip().lower() in ("1", "true", "yes", "on")
 UPLOAD_DIR = ROOT_DIR / "uploads"
 DATA_DIR = ROOT_DIR / "data"
 STATIC_DIR = ROOT_DIR / "static"

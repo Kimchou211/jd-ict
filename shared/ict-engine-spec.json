@@ -1,0 +1,312 @@
+{
+  "engine_version": "3.0.0",
+  "parity_tolerance": {
+    "price_absolute": 1e-8,
+    "price_relative": 1e-10
+  },
+  "timeframes_minutes": {
+    "M1": 1,
+    "M5": 5,
+    "M15": 15,
+    "H1": 60,
+    "H4": 240,
+    "D1": 1440,
+    "W1": 10080
+  },
+  "setup_lookback_bars": {
+    "M1": 90,
+    "M5": 80,
+    "M15": 60,
+    "H1": 48,
+    "H4": 24,
+    "D1": 20,
+    "W1": 12
+  },
+  "setup_validity_hours": {
+    "M1": 2,
+    "M5": 6,
+    "M15": 18,
+    "H1": 48,
+    "H4": 96,
+    "D1": 480,
+    "W1": 2016
+  },
+  "indicators": {
+    "atr_period": 14,
+    "swing_left": 3,
+    "swing_right": 3,
+    "internal_swing_strength": 2,
+    "external_swing_strength": 5,
+    "structure_lookback": 100,
+    "displacement_lookback": 20,
+    "cisd_max_opposing_candles": 3
+  },
+  "displacement": {
+    "moderate_body_atr": 0.8,
+    "moderate_range_atr": 1.2,
+    "moderate_close_location": 0.65,
+    "strong_body_atr": 1.25,
+    "strong_range_atr": 1.6,
+    "strong_close_location": 0.75,
+    "extreme_body_atr": 1.8,
+    "extreme_range_atr": 2.2,
+    "extreme_close_location": 0.85,
+    "extreme_consecutive_closes": 2
+  },
+  "fvg": {
+    "min_size_atr": 0.08,
+    "invalidation": "close_through",
+    "ote_levels": [0.62, 0.705, 0.79]
+  },
+  "sessions": {
+    "timezone": "America/New_York",
+    "asia": { "start": "20:00", "end": "00:00" },
+    "london_killzone": { "start": "02:00", "end": "05:00" },
+    "new_york_killzone": { "start": "07:00", "end": "10:00" },
+    "london": { "start": "00:00", "end": "07:00" },
+    "new_york": { "start": "10:00", "end": "17:00" }
+  },
+  "scoring": {
+    "setup_max": 100,
+    "groups": {
+      "higher_timeframe_bias": 15,
+      "liquidity_sweep_quality": 20,
+      "structure_displacement": 20,
+      "pd_array_confluence": 20,
+      "session_context": 10,
+      "target_liquidity": 10,
+      "data_quality": 5
+    }
+  },
+  "risk": {
+    "minimum_theoretical_rr": 1.5,
+    "preferred_rr": 2.0
+  },
+  "data_quality": {
+    "minimum_bars_for_regime": 30,
+    "gap_tolerance_intervals": 1,
+    "aggregation_min_coverage": 0.9
+  },
+  "scanner": {
+    "coverage_timeframes": ["W1", "D1", "H4", "H1", "M15", "M5", "M1"],
+    "minimum_candles": 60,
+    "output_contract": {
+      "direction": "both",
+      "entry_zone": "validated model-specific price zone",
+      "invalidation": "stop beyond the originating sweep or setup structure",
+      "target": "nearest qualified opposing liquidity, then explicit R extension",
+      "expiry": "timeframe_setup_validity_hours",
+      "setup_score": "shared_evidence_group_score",
+      "entry_readiness": "current_price_vs_entry_zone_and_risk_levels"
+    },
+    "models": [
+      {
+        "id": "ICT_2022",
+        "name": "ICT 2022",
+        "family": "REVERSAL",
+        "enabled": true,
+        "detector": "sweep_mss_displacement_fvg",
+        "timeframes": ["M1", "M5", "M15", "H1"],
+        "requirements": ["liquidity_sweep", "structure_shift", "displacement", "fvg", "valid_retrace"],
+        "event_sequence": ["liquidity_sweep", "MSS", "displacement", "FVG", "retracement"]
+      },
+      {
+        "id": "LIQUIDITY_SWEEP_REVERSAL",
+        "name": "Liquidity Sweep Reversal",
+        "family": "REVERSAL",
+        "enabled": true,
+        "detector": "sweep_structure_array",
+        "timeframes": ["M1", "M5", "M15", "H1"],
+        "requirements": ["liquidity_sweep", "structure_confirmation", "entry_array", "risk_plan"],
+        "event_sequence": ["liquidity_sweep", "BOS_or_MSS", "entry_array", "risk_plan"]
+      },
+      {
+        "id": "TURTLE_SOUP",
+        "name": "Turtle Soup",
+        "family": "REVERSAL",
+        "enabled": true,
+        "detector": "prior_period_false_break",
+        "timeframes": ["M1", "M5", "M15", "H1"],
+        "requirements": ["prior_period_extreme", "false_breakout", "structure_confirmation", "opposing_target"],
+        "event_sequence": ["prior_period_extreme", "false_breakout", "close_back_inside", "structure_confirmation", "opposing_target"]
+      },
+      {
+        "id": "JUDAS_SWING",
+        "name": "Judas Swing",
+        "family": "REVERSAL",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["session_open", "false_directional_move", "reversal_confirmation"],
+        "event_sequence": ["session_open", "false_directional_move", "reversal_confirmation"]
+      },
+      {
+        "id": "UNICORN",
+        "name": "Unicorn",
+        "family": "REVERSAL",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["validated_order_block", "confirmed_breaker", "actual_fvg_overlap", "valid_retest"],
+        "event_sequence": ["validated_order_block", "breaker_close_through", "FVG_overlap", "retest"]
+      },
+      {
+        "id": "OTE_CONTINUATION",
+        "name": "OTE Continuation",
+        "family": "CONTINUATION",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15", "H1"],
+        "requirements": ["continuation_structure", "displacement_leg", "ote_retracement", "continuation_confirmation"],
+        "event_sequence": ["continuation_structure", "displacement_leg", "OTE_retracement", "continuation_confirmation"]
+      },
+      {
+        "id": "FVG_RETRACEMENT",
+        "name": "FVG Retracement",
+        "family": "CONTINUATION",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["continuation_structure", "unmitigated_fvg", "valid_retest", "invalidation", "target"],
+        "event_sequence": ["continuation_structure", "FVG_created", "FVG_retest", "continuation_confirmation"]
+      },
+      {
+        "id": "OB_RETRACEMENT",
+        "name": "Order Block Retracement",
+        "family": "CONTINUATION",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["continuation_structure", "validated_order_block", "valid_retest", "invalidation", "target"],
+        "event_sequence": ["continuation_structure", "validated_order_block", "order_block_retest", "continuation_confirmation"]
+      },
+      {
+        "id": "BREAKER_CONTINUATION",
+        "name": "Breaker Continuation",
+        "family": "CONTINUATION",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["validated_order_block", "confirmed_breaker", "valid_retest", "invalidation", "target"],
+        "event_sequence": ["validated_order_block", "breaker_close_through", "breaker_retest", "continuation_confirmation"]
+      },
+      {
+        "id": "TREND_CONTINUATION",
+        "name": "Trend Continuation",
+        "family": "CONTINUATION",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M5", "M15", "H1"],
+        "requirements": ["aligned_structure", "displacement", "retracement", "continuation_confirmation"],
+        "event_sequence": ["aligned_structure", "displacement", "retracement", "continuation_confirmation"]
+      },
+      {
+        "id": "SILVER_BULLET_LONDON",
+        "name": "Silver Bullet London",
+        "family": "TIME_BASED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["configured_london_silver_bullet_window", "liquidity_sweep", "structure_shift", "displacement", "fvg"],
+        "event_sequence": ["configured_london_window", "liquidity_sweep", "MSS", "displacement", "FVG"]
+      },
+      {
+        "id": "SILVER_BULLET_NY_AM",
+        "name": "Silver Bullet New York AM",
+        "family": "TIME_BASED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["configured_new_york_am_silver_bullet_window", "liquidity_sweep", "structure_shift", "displacement", "fvg"],
+        "event_sequence": ["configured_new_york_am_window", "liquidity_sweep", "MSS", "displacement", "FVG"]
+      },
+      {
+        "id": "SILVER_BULLET_NY_PM",
+        "name": "Silver Bullet New York PM",
+        "family": "TIME_BASED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["configured_new_york_pm_silver_bullet_window", "liquidity_sweep", "structure_shift", "displacement", "fvg"],
+        "event_sequence": ["configured_new_york_pm_window", "liquidity_sweep", "MSS", "displacement", "FVG"]
+      },
+      {
+        "id": "ICT_MACROS",
+        "name": "ICT Macros",
+        "family": "TIME_BASED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5"],
+        "requirements": ["configured_macro_window", "liquidity_event", "structure_confirmation"],
+        "event_sequence": ["configured_macro_window", "liquidity_event", "structure_confirmation"]
+      },
+      {
+        "id": "POWER_OF_THREE",
+        "name": "Power of Three / AMD",
+        "family": "ADVANCED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M5", "M15", "H1", "H4"],
+        "requirements": ["accumulation_range", "manipulation_sweep", "distribution_confirmation"],
+        "event_sequence": ["accumulation", "manipulation_sweep", "distribution"]
+      },
+      {
+        "id": "MMXM",
+        "name": "MMXM",
+        "family": "ADVANCED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M5", "M15", "H1", "H4"],
+        "requirements": ["validated_market_maker_cycle", "structure_confirmation", "risk_plan"],
+        "event_sequence": ["validated_market_maker_cycle", "structure_confirmation", "risk_plan"]
+      },
+      {
+        "id": "OSOK",
+        "name": "OSOK",
+        "family": "ADVANCED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["validated_one_shot_sequence", "session_context", "risk_plan"],
+        "event_sequence": ["session_context", "validated_one_shot_sequence", "risk_plan"]
+      },
+      {
+        "id": "SMT",
+        "name": "SMT Divergence",
+        "family": "ADVANCED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M5", "M15", "H1"],
+        "requirements": ["two_real_feeds", "synchronized_closed_candles", "confirmed_swing_divergence"],
+        "event_sequence": ["synchronized_closed_candles", "confirmed_swing_divergence"]
+      },
+      {
+        "id": "BPR_CONFLUENCE",
+        "name": "BPR Confluence",
+        "family": "ADVANCED",
+        "enabled": false,
+        "detector": null,
+        "timeframes": ["M1", "M5", "M15"],
+        "requirements": ["opposing_fvgs", "actual_overlap", "price_retest", "invalidation", "target"],
+        "event_sequence": ["opposing_FVGs", "actual_overlap", "price_retest", "risk_plan"]
+      }
+    ]
+  },
+  "models": {
+    "ICT_2022": {
+      "requirements": ["liquidity_sweep", "structure_shift", "displacement", "fvg", "valid_retrace"]
+    },
+    "TURTLE_SOUP": {
+      "requirements": ["prior_range_extreme", "false_breakout", "close_back_inside", "confirmation", "opposing_target"]
+    },
+    "SILVER_BULLET": {
+      "requirements": ["configured_killzone", "liquidity_sweep", "structure_shift", "displacement", "fvg", "valid_retrace"]
+    },
+    "UNICORN": {
+      "requirements": ["validated_order_block", "confirmed_breaker", "actual_fvg_overlap", "valid_retest"]
+    },
+    "SMT": {
+      "requirements": ["two_real_feeds", "synchronized_closed_candles", "confirmed_swing_divergence"]
+    }
+  }
+}

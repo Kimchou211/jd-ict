@@ -2,7 +2,7 @@
 <html lang="km">
 <head>
 <meta charset="utf-8"><meta name="theme-color" content="#07090e"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,">
-<title>JD ANALYSIS — XAUUSD Chart Intelligence</title>
+<title>JD ANALYSIS — Gold & Bitcoin Chart Intelligence</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="/ui.css">
 </head>
@@ -19,15 +19,15 @@
     <button data-page="news" data-short="News"><span class="ico">◴</span><span class="navtext">News Terminal</span><span class="pip" id="newsPip">LIVE</span></button>
     <button data-page="settings" data-short="Setup"><span class="ico">⚙</span><span class="navtext">Configuration</span></button>
   </nav></div>
-  <div class="sidebar-bottom"><div class="nav-label" style="padding:0;margin-bottom:10px">SYSTEM STATUS</div><div class="statusline"><i class="dot" id="dbDot"></i><span class="status-copy" id="dbStatus">Checking database…</span></div><div class="statusline"><i class="dot" id="aiDot"></i><span class="status-copy" id="aiStatus">Checking AI providers…</span></div><div class="tiny status-copy" style="margin-top:12px">Local-first · XAUUSD only</div></div>
+  <div class="sidebar-bottom"><div class="nav-label" style="padding:0;margin-bottom:10px">SYSTEM STATUS</div><div class="statusline"><i class="dot" id="dbDot"></i><span class="status-copy" id="dbStatus">Checking database…</span></div><div class="statusline"><i class="dot" id="aiDot"></i><span class="status-copy" id="aiStatus">Checking AI providers…</span></div><div class="tiny status-copy" style="margin-top:12px">Local-first · XAUUSD + BTCUSD</div></div>
 </aside>
 <main class="main">
   <div class="newsbar" id="newsBar" role="status" aria-live="polite"><span class="nb-tag" id="nbTag">NEWS</span><span class="nb-title" id="nbTitle">Loading economic calendar…</span><span class="nb-cd mono" id="nbCd"></span><button class="nb-link" id="nbGo">Open ↗</button></div>
   <header class="topbar"><div><div class="eyebrow">MARKET INTELLIGENCE / XAUUSD</div><h1 id="pageTitle">Chart Analyzer</h1></div><div class="top-right"><div class="clock" aria-label="Local time"><b id="clockTime">--:--:--</b><span id="clockUtc">UTC --:--</span></div><span class="mode-pill"><i class="dot"></i> LIVE + IMAGE MODES</span><button class="iconbtn" id="refreshBtn" title="Refresh status and history">↻</button></div></header>
 
   <section class="page active" id="page-analyzer">
-    <div class="hero"><div><div class="eyebrow">MULTI-TIMEFRAME VISION</div><h2>Upload. Analyze. Validate.</h2><p>Upload two XAUUSD chart screenshots. Gemini and DeepSeek independently inspect structure, then the validation layer checks visible price and ATR values before calculating any levels.</p></div><div class="provider-row" id="providerBadges"><span class="provider">Gemini · checking</span><span class="provider">DeepSeek · checking</span></div></div>
-    <div class="notice"><span class="nicon">ⓘ</span><div><strong style="color:#e8d59f">Signal grade guard.</strong> Every analysis returns BUY or SELL (FORCE_SIGNAL=true) with a quality grade: <b>A/B</b> = price and ATR were read from your screenshots; <b>C/D</b> = some numbers were estimated or the AIs disagreed (low quality). For Grade A, keep the XAUUSD price badge and an ATR indicator value visible on both charts. Prices come from screenshots, not a live feed, and no signal is guaranteed.</div></div>
+    <div class="hero"><div><div class="eyebrow">MULTI-TIMEFRAME VISUAL EXTRACTION + LIVE VERIFICATION</div><h2>Upload. Extract. Verify.</h2><p>Two screenshots are normalized without stretching, visually inspected, and compared with completed market candles when available. Trading levels are issued only from a validated live ICT setup, never from a screenshot ATR formula.</p></div><div class="provider-row" id="providerBadges"><span class="provider">Gemini · checking</span><span class="provider">DeepSeek · checking</span></div></div>
+    <div class="notice"><span class="nicon">ⓘ</span><div><strong style="color:#e8d59f">Evidence-first analysis.</strong> Screenshot values remain distinct from live quotes. Missing or conflicting data is reported; image-only analysis does not manufacture BUY/SELL or trade levels. Visual annotations are evidence, not orders.</div></div>
     <div class="panel" style="display:flex;gap:12px;align-items:center;margin-bottom:14px;padding:12px 16px"><span class="eyebrow" style="margin:0">SYMBOL ON THE SCREENSHOTS</span><select id="imgSymbol" class="timeframe"><option value="XAUUSD" selected>XAUUSD · Gold</option><option value="BTCUSD">BTCUSD · Bitcoin</option></select><span class="tiny">The symbol name must be visible on both charts.</span></div>
     <div class="grid upload-grid">
       <article class="panel"><div class="panel-header"><div><h3>Primary / Execution Chart</h3><p>Choose the lower or entry timeframe</p></div><span class="step">01 / IMAGE</span></div>
@@ -39,17 +39,18 @@
         <div class="drop" id="drop2"><input type="file" id="file2" accept="image/png,image/jpeg,image/webp"><div class="drop-inner" id="inner2"><span class="upload-icon">＋</span><strong>Drop second chart screenshot here</strong><small>Use the same symbol and capture them close in time</small></div><img id="preview2" class="hidden" alt="Secondary timeframe preview"><span id="previewTag2" class="preview-tag hidden">SECONDARY</span></div><div class="filemeta"><span id="fileName2">No image selected</span><span id="fileSize2"></span></div>
       </article>
     </div>
-    <div class="action-row"><div class="checklist"><span class="chip">Dual AI review</span><span class="chip">ATR validation</span><span class="chip">Canvas annotations</span><span class="chip">Signal history</span></div><button id="analyzeBtn" class="btn primary" disabled><span>✦</span> Analyze XAUUSD <span>→</span></button></div>
-    <div id="loadingCover" class="loading-cover"><span class="bigspinner"></span><span>Reading both charts · comparing Gemini and DeepSeek · validating numeric levels…</span></div>
+    <div class="action-row"><div class="checklist"><span class="chip">Staged visual extraction</span><span class="chip">Live candle verification</span><span class="chip">Deterministic ICT levels</span><span class="chip">Chart annotations</span></div><button id="analyzeBtn" class="btn primary" disabled><span>✦</span> Analyze XAUUSD <span>→</span></button></div>
+    <div id="loadingCover" class="loading-cover"><span class="bigspinner"></span><div><strong id="analysisProgressTitle">Preparing normalized screenshots…</strong><ol id="analysisProgressStages" class="analysis-stages"></ol></div></div>
     <div id="analysisArea" class="hidden">
       <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;gap:10px">Trade Read <span class="badge warn" id="snapshotBadge">SCREENSHOT SNAPSHOT</span></div>
+      <article class="panel"><div class="panel-header"><div><h3>Processing stages</h3><p>Measured stage outputs, quality warnings and data provenance</p></div></div><ol id="analysisStageReport" class="analysis-stages"></ol></article>
       <div class="results-top">
         <article class="panel"><div class="panel-header"><h3>Decision & Validation</h3><span id="readinessBadge" class="badge warn">WAIT / NOT VALIDATED</span></div><div class="decision"><div id="decisionIcon" class="decision-icon wait">Ⅱ</div><div><h2 id="decisionText">WAIT</h2><p id="decisionSub">No validated numeric setup yet</p></div><div class="right-status"><div class="confidence"><span id="confidenceText">0</span><span> / 100</span></div><div class="meter"><span id="confidenceMeter"></span></div><div class="tiny" style="margin-top:5px">Model confidence · not win rate</div></div></div><div class="tag-row" id="providerResults"></div><div style="margin-top:16px;border-top:1px solid var(--edge);padding-top:14px"><div class="eyebrow" style="margin-bottom:7px">MODEL RATIONALE</div><div class="bodycopy" id="rationaleText">Upload two charts to begin.</div></div></article>
-        <article class="panel"><div class="panel-header"><h3>ATR-Based Levels</h3><span class="badge" id="levelsBadge">Pending</span></div><div class="metric-grid"><div class="metric"><label>Reference Entry</label><strong id="mEntry" class="mono">—</strong><small>Screenshot price</small></div><div class="metric"><label>Entry Zone · Low</label><strong id="mEntryLow" class="mono">—</strong><small>Calculated range</small></div><div class="metric"><label>Entry Zone · High</label><strong id="mEntryHigh" class="mono">—</strong><small>Calculated range</small></div><div class="metric"><label>Stop Loss</label><strong id="mSL" class="mono" style="color:var(--red)">—</strong><small>1.20 × effective ATR</small></div><div class="metric"><label>Take Profit 1</label><strong id="mTP1" class="mono" style="color:var(--green)">—</strong><small>1.00R target</small></div><div class="metric"><label>Take Profit 2</label><strong id="mTP2" class="mono" style="color:var(--green)">—</strong><small>1.80R target</small></div></div><div id="atrMethod" class="bodycopy" style="margin-top:14px;font-size:10px;color:#8597ad">ATR formula will be shown after validation.</div></article>
+        <article class="panel"><div class="panel-header"><h3>Market-Validated ICT Plan</h3><span class="badge" id="levelsBadge">WAIT / NOT VALIDATED</span></div><div class="metric-grid"><div class="metric"><label>LIVE REFERENCE / ENTRY</label><strong id="mEntry" class="mono">—</strong><small>Completed market candle</small></div><div class="metric"><label>Entry Zone · Low</label><strong id="mEntryLow" class="mono">—</strong><small>Validated setup zone</small></div><div class="metric"><label>Entry Zone · High</label><strong id="mEntryHigh" class="mono">—</strong><small>Validated setup zone</small></div><div class="metric"><label>Structural Invalidation</label><strong id="mSL" class="mono" style="color:var(--red)">—</strong><small>Setup structure</small></div><div class="metric"><label>Liquidity Target 1</label><strong id="mTP1" class="mono" style="color:var(--green)">—</strong><small>Qualified target</small></div><div class="metric"><label>Liquidity Target 2</label><strong id="mTP2" class="mono" style="color:var(--green)">—</strong><small>Qualified target</small></div></div><div id="atrMethod" class="bodycopy" style="margin-top:14px;font-size:10px;color:#8597ad">No actionable levels until a live ICT setup is validated.</div></article>
       </div>
       <div class="subgrid"><article class="panel"><div class="panel-header"><h3>Multi-Timeframe Snapshot</h3><span class="badge" id="alignmentBadge">Unclear</span></div><div id="tfSummary" class="grid" style="gap:10px"></div></article><article class="panel"><div class="panel-header"><h3>Risk & Validation Checks</h3><span class="badge warn" id="checksCount">0 checks</span></div><ul id="riskNotes" class="bullet-list"><li>No analysis yet.</li></ul></article></div>
-      <div class="subgrid"><article class="panel" style="grid-column:1/-1"><div class="panel-header"><h3>Conditional Setup Scanner</h3><span class="badge warn" id="scenarioBadge">SCENARIOS · NOT ORDERS</span></div><div id="scenarioGrid" class="grid upload-grid"><div class="metric"><label>BUY scenario</label><p class="bodycopy">Upload charts to generate a conditional trigger.</p></div><div class="metric"><label>SELL scenario</label><p class="bodycopy">Upload charts to generate a conditional trigger.</p></div></div><p class="tiny" style="margin-bottom:0">Conditional triggers are watch conditions, not guaranteed entries. Numeric levels appear only when screenshot price and ATR values are readable.</p></article></div>
-      <div class="section-title">AI Canvas · Annotated Chart</div><p class="tiny" style="margin:-7px 0 13px">Annotations are drawn onto the original uploaded screenshot using the AI's normalized coordinates. Calculated horizontal levels appear only if the screenshot's price scale can be corroborated.</p>
+      <div class="subgrid"><article class="panel" style="grid-column:1/-1"><div class="panel-header"><h3>Visual Evidence</h3><span class="badge warn" id="scenarioBadge">NOT A TRADE DECISION</span></div><div id="scenarioGrid" class="grid upload-grid"><div class="metric"><label>Image quality</label><p class="bodycopy">Upload charts to extract visible features.</p></div></div><p class="tiny" style="margin-bottom:0">The visual model extracts evidence only. Trade levels, when available, come from validated market-feed candles and deterministic ICT rules.</p></article></div>
+      <div class="section-title">Visual Evidence · Annotated Chart</div><p class="tiny" style="margin:-7px 0 13px">Annotations mark visible chart features. Entry, invalidation and target lines are shown only when supported by a validated live ICT setup and a readable screenshot price scale.</p>
       <div class="chartgrid"><article class="panel chart-card"><div class="chart-heading"><strong id="chartTitle1">Primary chart</strong><span>AI OVERLAY</span></div><div class="canvas-wrap"><img id="resultImg1" alt="Primary analyzed chart"><canvas id="canvas1"></canvas></div><div class="ict-pills img-pills" data-canvas="canvas1"></div><div class="chart-foot" id="chartFoot1">Waiting for image analysis.</div></article><article class="panel chart-card"><div class="chart-heading"><strong id="chartTitle2">Secondary chart</strong><span>AI OVERLAY</span></div><div class="canvas-wrap"><img id="resultImg2" alt="Secondary analyzed chart"><canvas id="canvas2"></canvas></div><div class="ict-pills img-pills" data-canvas="canvas2"></div><div class="chart-foot" id="chartFoot2">Waiting for image analysis.</div></article></div>
       <div class="footer-note" id="savedNote">Signals are stored in the configured database when available.</div>
     </div>
@@ -73,12 +74,12 @@
   </section>
 
   <section class="page" id="page-ict">
-    <div class="hero"><div><div class="eyebrow">ICT ENGINE · DETERMINISTIC + AI MENTOR</div><h2>ICT Terminal</h2><p>The engine reads real candles (H1 → M15 → entry timeframe): swings, BOS/MSS, liquidity and sweeps, FVG, order blocks, premium/discount, CRT and kill zones. Press Analyzer and it draws the plan on the chart. The AI mentor can only approve or veto engine setups; it cannot create prices.</p></div><span class="badge warn" id="ictFeedBadge">FEED NOT CHECKED</span></div>
+    <div class="hero"><div><div class="eyebrow">ICT ENGINE · FULL-TIMEFRAME CANDIDATE SCANNER</div><h2>ICT Terminal</h2><p>The engine scans every available configured timeframe for enabled, validated model detectors and returns all ranked candidates. Swings, BOS/MSS, liquidity sweeps, FVG, order blocks, premium/discount, CRT and kill zones are computed from completed candles. The AI mentor can only approve or veto engine setups; it cannot create prices.</p></div><span class="badge warn" id="ictFeedBadge">FEED NOT CHECKED</span></div>
     <div class="notice"><span class="nicon">ⓘ</span><div><strong style="color:#e8d59f">Analysis, not a guarantee.</strong> The score is confluence, not win probability. Entries are limit zones to wait for. Verify price and spread at your broker. Gold is closed on weekends, so a weekend scan analyses the last session and shows WAIT.</div></div>
     <div class="ict-newsstrip" id="ictNewsStrip"><span class="badge">NEWS</span><span class="tiny">Loading calendar…</span></div>
     <div class="panel live-toolbar"><div class="live-toolbar-left"><div><div class="eyebrow">SYMBOL</div><strong style="font-size:16px">XAUUSD <span class="tiny">· Gold / USD</span></strong></div><span class="tiny" id="ictSource">Source: —</span></div>
-      <div class="live-toolbar-right"><select class="timeframe" id="ictTf" aria-label="Entry timeframe"><option value="M1">M1 · entry</option><option value="M5" selected>M5 · entry</option><option value="M15">M15 · entry</option></select><label class="tiny" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ictAi" checked> AI ICT mentor</label><button class="btn secondary" id="ictRefreshBtn">↻ Refresh</button><button class="btn secondary" id="ictResetView">⤢ Reset view</button><button class="btn primary" id="ictAnalyzeBtn">✦ Analyzer · Scan Market</button></div></div>
-    <div id="ictProgress" class="live-progress"><span class="bigspinner"></span><span>Fetching H1 / M15 / entry candles, running the ICT engine, asking the AI mentor, validating…</span></div>
+      <div class="live-toolbar-right"><select class="timeframe" id="ictTf" aria-label="Execution timeframe"><option value="M1">M1 · execution</option><option value="M5" selected>M5 · execution</option><option value="M15">M15 · execution</option><option value="H1">H1 · execution</option><option value="H4">H4 · execution</option><option value="D1">D1 · execution</option><option value="W1">W1 · execution</option></select><label class="tiny" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ictAi" checked> AI ICT mentor</label><button class="btn secondary" id="ictRefreshBtn">↻ Refresh</button><button class="btn secondary" id="ictResetView">⤢ Reset view</button><button class="btn primary" id="ictAnalyzeBtn">✦ Analyzer · Scan Market</button></div></div>
+    <div id="ictProgress" class="live-progress"><span class="bigspinner"></span><span>Fetching W1 / D1 / H4 / H1 / M15 / M5 / M1 feeds, scanning enabled models, asking the AI mentor, validating…</span></div>
     <article class="panel"><div class="ict-chart-wrap"><canvas id="ictCanvas"></canvas></div>
       <div class="ict-pills" id="ictPills"><button class="ict-pill on" data-layer="liquidity">Liquidity</button><button class="ict-pill on" data-layer="range">Range</button><button class="ict-pill on" data-layer="structure">Structure</button><button class="ict-pill on" data-layer="zones">Zones</button><button class="ict-pill on" data-layer="plan">Plan</button><button class="ict-pill on" data-ai="1"><span>AI · 0 drawings</span> 👁 <span class="x" data-clear>✕</span></button></div>
       <div class="chart-foot">Scroll / pinch to zoom · drag to pan (also vertically) · double-click to reset. Drawings come from the engine; they are placed by candle time and price, so they stay attached while you zoom.</div></article>
@@ -88,7 +89,15 @@
         <div class="ict-metrics"><div class="metric"><label>Entry zone · Low</label><strong id="ictEntryLo" class="mono">—</strong></div><div class="metric"><label>Entry zone · High</label><strong id="ictEntryHi" class="mono">—</strong></div><div class="metric"><label>Stop (above sweep)</label><strong id="ictSL" class="mono" style="color:var(--red)">—</strong></div><div class="metric"><label>Take profit 1</label><strong id="ictTP1" class="mono" style="color:var(--green)">—</strong></div><div class="metric"><label>Take profit 2</label><strong id="ictTP2" class="mono" style="color:var(--green)">—</strong></div><div class="metric"><label>R:R  TP1 / TP2</label><strong id="ictRR" class="mono">—</strong><small id="ictRisk"></small></div></div>
         <div class="tiny" id="ictTpBasis" style="margin-top:8px"></div>
         <div class="section-title" style="font-size:13px;margin-top:16px">Why (engine confluence)</div><ul class="bullet-list" id="ictReasons"><li>No scan yet.</li></ul>
-        <div class="section-title" style="font-size:13px;margin-top:16px">Candidate setups</div><div class="ict-metrics" id="ictSetups"></div>
+        <div class="section-title" style="font-size:13px;margin-top:16px">Full-coverage setup candidates</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">
+          <select class="timeframe" id="ictSetupDirection" aria-label="Filter candidates by direction"><option value="">All directions</option><option value="BUY">BUY</option><option value="SELL">SELL</option></select>
+          <select class="timeframe" id="ictSetupModel" aria-label="Filter candidates by model"><option value="">All models</option></select>
+          <select class="timeframe" id="ictSetupTimeframe" aria-label="Filter candidates by timeframe"><option value="">All timeframes</option><option>M1</option><option>M5</option><option>M15</option><option>H1</option><option>H4</option><option>D1</option><option>W1</option></select>
+          <select class="timeframe" id="ictSetupStatus" aria-label="Filter candidates by lifecycle"><option value="">All lifecycle states</option><option>DETECTED</option><option>FORMING</option><option>WAITING_FOR_CONFIRMATION</option><option>CONFIRMED</option><option>WAITING_FOR_RETRACE</option><option>ENTRY_READY</option><option>ACTIVE</option><option>TARGET_REACHED</option><option>INVALIDATED</option><option>EXPIRED</option></select>
+          <input class="timeframe" id="ictSetupMinScore" aria-label="Minimum setup score" type="number" min="0" max="100" step="1" placeholder="Min score">
+        </div>
+        <div class="tiny" id="ictScannerMeta"></div><div class="ict-metrics" id="ictSetups"></div>
         <div class="footer-note" id="ictSaved" style="text-align:left"></div></article>
       <div style="display:grid;gap:16px;align-content:start"><article class="panel"><div class="panel-header"><h3>Market context</h3></div><div id="ictBias"><div class="tiny">Run a scan.</div></div></article>
         <article class="panel"><div class="panel-header"><h3>AI ICT mentor</h3><span class="badge">DEEPSEEK</span></div><div id="ictAI"><div class="tiny">Run a scan.</div></div></article></div>
@@ -118,26 +127,175 @@
   </section>
 
   <section class="page" id="page-settings"><div class="hero"><div><div class="eyebrow">LOCAL CONFIGURATION</div><h2>Configuration & Status</h2><p>API secrets stay in your local .env file. This dashboard does not expose or store your keys.</p></div><span class="badge">WINDOWS LOCAL</span></div><div class="panel"><div class="panel-header"><h3>System Components</h3><span class="badge good">Live + Image</span></div><div class="settings-row"><div><strong>Gemini Vision</strong><p>Independent screenshot reader</p></div><div id="settingGemini" class="bodycopy">Checking configuration…</div></div><div class="settings-row"><div><strong>DeepSeek Vision + Chat</strong><p>Independent chart review and chat assistant</p></div><div id="settingDeepseek" class="bodycopy">Checking configuration…</div></div><div class="settings-row"><div><strong>Database</strong><p>Neon PostgreSQL or local SQLite fallback</p></div><div id="settingDb" class="bodycopy">Checking connection…</div></div><div class="settings-row"><div><strong>Live Market Terminal</strong><p>Yahoo Finance XAUUSD=X spot candles</p></div><div class="bodycopy">Live Terminal polls the external quote feed only while open. Analyzer separately runs the EMA/RSI/ATR/MACD confluence scan and requests an optional DeepSeek review. The screenshot analyzer remains separate.</div></div><div class="settings-row"><div><strong>News layer</strong><p>Calendar · blackout · rules</p></div><div class="bodycopy">Free sources: Finnhub (set <code>FINNHUB_API_KEY</code> — includes Actual) and Forex Factory's unofficial weekly JSON (no key — no Actual, type it in). Blackout window = <code>NEWS_BLACKOUT_BEFORE_MIN</code> / <code>NEWS_BLACKOUT_AFTER_MIN</code> (default 30/30). Blackout never blocks a signal.</div></div><div class="settings-row"><div><strong>Trade-level policy</strong><p>Forced signal + grade</p></div><div class="bodycopy">FORCE_SIGNAL=true (default): always BUY or SELL, graded A–D by how much was read from the chart vs estimated. FORCE_SIGNAL=false: strict mode, returns WAIT unless both AIs agree and price/ATR are verified. Mark each signal TP1 / TP2 / SL in Signal History to see your real win rate.</div></div><div class="settings-row"><div><strong>ATR formula</strong><p>Transparent and deterministic</p></div><div class="bodycopy">Effective ATR = 0.65 × primary ATR + 0.35 × secondary ATR scaled by the square root of primary timeframe minutes / secondary timeframe minutes. SL = 1.20 × effective ATR; TP1 = 1.00R; TP2 = 1.80R. R equals the SL distance. This is a configurable risk convention, not a guarantee of profitability.</div></div></div><div class="notice" style="margin-top:16px"><span class="nicon">⚠</span><div>Gemini free-tier availability, quotas and models can change. DeepSeek image-analysis access may depend on your API account and selected model. Keep model names configurable in <code>.env</code>. The application does not ship API keys, a database password, or sample/fake signal data.</div></div></section>
-  <div class="footer-note">JD ANALYSIS · XAUUSD ONLY · LIVE FEED + SEPARATE SCREENSHOT ANALYSIS · NOT FINANCIAL ADVICE</div>
+  <div class="footer-note">JD ANALYSIS · XAUUSD + BTCUSD · LIVE FEED + SEPARATE SCREENSHOT ANALYSIS · NOT FINANCIAL ADVICE</div>
 </main></div><div id="toast" class="toast" role="status"></div>
+<script src="/image-prep.js"></script>
 <script>
-const state={files:[null,null],urls:[null,null],latest:null,history:[],chatBusy:false,liveMarket:null,latestLive:null,liveChatBusy:false};
+const state={files:[null,null],prepared:[null,null],preparation:[null,null],prepTokens:[0,0],urls:[null,null],latest:null,history:[],chatBusy:false,liveMarket:null,latestLive:null,liveChatBusy:false};
 const $=id=>document.getElementById(id);
+function updateSymbolCopy(){const symbol=$('imgSymbol').value;$('analyzeBtn').innerHTML=`<span>✦</span> Analyze ${symbol} <span>→</span>`;document.querySelector('.topbar .eyebrow').textContent=`MARKET INTELLIGENCE / ${symbol}`}
+$('imgSymbol').addEventListener('change',updateSymbolCopy);updateSymbolCopy();
 const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),4200)}
 function fmt(v,d=2){return typeof v==='number'&&Number.isFinite(v)?v.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}):'—'}
 function timeFmt(s){if(!s)return '—';const d=new Date(s);return Number.isNaN(d.getTime())?s:d.toLocaleString()}
 function navTo(page){document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+page));const titles={ict:'ICT Terminal',news:'News Terminal',analyzer:'Chart Analyzer',history:'Signal History',chat:'DeepSeek Chat','live-terminal':'Live Chat Terminal',settings:'Configuration'};$('pageTitle').textContent=titles[page]||'JD ANALYSIS';if(page==='history')loadHistory();if(page==='ict'&&window.ictOpen)ictOpen();if(page==='news'&&window.newsOpen)newsOpen();window.scrollTo({top:0,behavior:'smooth'});if(page==='live-terminal'&&!state.liveMarket)loadLiveMarket()}
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>navTo(b.dataset.page)));
-function preview(n,file){const idx=n-1;state.files[idx]=file||null;if(state.urls[idx])URL.revokeObjectURL(state.urls[idx]);state.urls[idx]=file?URL.createObjectURL(file):null;const img=$('preview'+n),inner=$('inner'+n),tag=$('previewTag'+n);if(file){img.src=state.urls[idx];img.classList.remove('hidden');inner.classList.add('hidden');tag.classList.remove('hidden');$('fileName'+n).textContent=file.name;$('fileSize'+n).textContent=(file.size/1024/1024).toFixed(2)+' MB'}else{img.removeAttribute('src');img.classList.add('hidden');inner.classList.remove('hidden');tag.classList.add('hidden');$('fileName'+n).textContent='No image selected';$('fileSize'+n).textContent=''}$('analyzeBtn').disabled=!(state.files[0]&&state.files[1])}
-[1,2].forEach(n=>{const file=$('file'+n),drop=$('drop'+n);file.addEventListener('change',()=>{if(file.files[0]){if(!file.files[0].type.startsWith('image/')){toast('Choose an image file.');return}preview(n,file.files[0])}});['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)preview(n,f)})});
+async function preview(n,file){
+ const idx=n-1,token=++state.prepTokens[idx];state.files[idx]=file||null;state.prepared[idx]=null;state.preparation[idx]=null;
+ if(state.urls[idx])URL.revokeObjectURL(state.urls[idx]);state.urls[idx]=file?URL.createObjectURL(file):null;
+ const img=$('preview'+n),inner=$('inner'+n),tag=$('previewTag'+n);
+ if(file){
+  img.src=state.urls[idx];img.classList.remove('hidden');inner.classList.add('hidden');tag.classList.remove('hidden');
+  $('fileName'+n).textContent=file.name;$('fileSize'+n).textContent=(file.size/1024/1024).toFixed(2)+' MB · preparing…';
+  $('analyzeBtn').disabled=true;
+  try{
+   const prepared=await window.prepareChartImage(file);if(token!==state.prepTokens[idx])return;
+   state.prepared[idx]=prepared.file;state.preparation[idx]=prepared.metadata;
+   const warning=prepared.metadata.blur_risk==='possible'?' · possible blur':prepared.metadata.unusual_aspect_ratio?' · unusual aspect ratio':'';
+   $('fileSize'+n).textContent=`${prepared.metadata.source_width}×${prepared.metadata.source_height} → ${prepared.metadata.normalized_width}×${prepared.metadata.normalized_height}${warning}`;
+  }catch(error){if(token===state.prepTokens[idx]){state.files[idx]=null;$('fileSize'+n).textContent='Image rejected';toast(error.message)}}
+ }else{img.removeAttribute('src');img.classList.add('hidden');inner.classList.remove('hidden');tag.classList.add('hidden');$('fileName'+n).textContent='No image selected';$('fileSize'+n).textContent=''}
+ $('analyzeBtn').disabled=!(state.files[0]&&state.files[1]&&state.prepared[0]&&state.prepared[1]);
+}
+[1,2].forEach(n=>{const file=$('file'+n),drop=$('drop'+n);file.addEventListener('change',()=>{if(file.files[0])preview(n,file.files[0])});['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)preview(n,f)})});
 async function request(url,options={}){const r=await fetch(url,options);let j={};try{j=await r.json()}catch{}if(!r.ok)throw new Error(j.detail||j.error||`Request failed (${r.status})`);return j}
+function stageSummary(stage){
+ const o=stage.output||{};
+ if(stage.status==='failed')return stage.error||'Stage failed.';
+ if(stage.id==='image_intake')return (o.images||[]).map((image,index)=>`Image ${index+1}: ${image.source_width||'?'}×${image.source_height||'?'} → ${image.normalized_width||'?'}×${image.normalized_height||'?'} · ${image.source_format||'unknown format'} · ${image.mode||'unknown'} · orientation ${image.orientation_applied?'corrected':'unknown'} · ratio ${image.aspect_ratio??'unknown'}${image.unusual_aspect_ratio?' · unusual aspect ratio':''} · blur ${image.blur_risk||image.browser_quality?.blur_risk||'unavailable'} · glare ${image.glare_risk||image.browser_quality?.glare_risk||'not assessed'}${(image.warnings||[]).length?` · ${(image.warnings||[]).join('; ')}`:''}`).join('\n');
+ if(stage.id==='visual_extraction')return `${(o.providers_succeeded||[]).join(', ')||'No providers'} · ${o.chart_reads||0} chart reads · ${(o.visual_quality||[]).map(chart=>`${chart.timeframe}: ${(chart.observations||[]).map(item=>`${item.provider} blur=${item.blur_risk||'unclear'}, glare=${item.glare||'unclear'}, crop=${item.cropped||'unclear'}, rotation=${item.rotated||'unclear'}`).join(' / ')}`).join(' · ')}${Object.keys(o.provider_errors||{}).length?` · errors: ${Object.keys(o.provider_errors).join(', ')}`:''}`;
+ if(stage.id==='chart_reconstruction')return (o.charts||[]).map(chart=>`${chart.timeframe}: ${chart.readable_price_labels?.length||0} explicit price labels · OHLC ${chart.reconstructed_ohlc?'reconstructed':'not inferred from pixels'}`).join('\n');
+ if(stage.id==='live_verification')return `${o.available?'Market candles retrieved':'Live verification incomplete'} · ${(o.feeds||[]).map(feed=>`${feed.timeframe} ${feed.status}`).join(' · ')}${Object.keys(o.errors||{}).length?` · ${Object.keys(o.errors).join(', ')} unavailable`:''}`;
+ if(stage.id==='ict_evaluation')return `${o.status||'not run'} · ${o.candidate_count||0} validated candidates · ${o.direction||'WAIT'}${o.error?` · ${o.error}`:''}`;
+ if(stage.id==='final_report')return `${o.decision||'WAIT'} · ${o.trade_ready?'trade levels validated':'no actionable trade levels'} · history ${o.history_saved?'saved':'not saved'}`;
+ return JSON.stringify(o);
+}
+function renderPipelineStages(target,stages){
+ target.replaceChildren();
+ for(const stage of stages||[]){
+  const item=document.createElement('li');item.className=`stage-${stage.status||'pending'}`;
+  const title=document.createElement('span');title.textContent=stage.name||stage.id||'Analysis stage';
+  const meta=document.createElement('span');meta.className='stage-meta';meta.textContent=stage.duration_ms==null?(stage.status==='running'?'Running…':'Queued'):`${stage.status} · ${Math.round(stage.duration_ms)} ms`;
+  const output=document.createElement('span');output.className='stage-output';output.textContent=stageSummary(stage);
+  item.append(title,meta,output);target.append(item);
+ }
+}
+async function analyzeStream(form,onEvent){
+ const response=await fetch('/api/analyze/stream',{method:'POST',body:form});
+ if(!response.ok){let body={};try{body=await response.json()}catch{}throw new Error(body.detail||body.error||`Request failed (${response.status})`)}
+ if(!response.body)throw new Error('Streaming progress is unavailable in this browser.');
+ const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+ while(true){
+  const {value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});
+  let boundary;
+  while((boundary=buffer.indexOf('\n\n'))>=0){
+   const chunk=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);
+   const line=chunk.split(/\r?\n/).find(part=>part.startsWith('data:'));
+   if(!line)continue;
+   const event=JSON.parse(line.slice(5).trim());onEvent(event);
+   if(event.type==='complete')return event.data;
+   if(event.type==='error')throw new Error(event.detail||`Analysis failed (${event.status||'unknown'}).`);
+  }
+  if(done)break;
+ }
+ throw new Error('Analysis stream ended before a final report was received.');
+}
 async function checkHealth(){try{const h=await request('/api/health');const ok=h.database==='connected';$('dbDot').className='dot '+(ok?'ok':'bad');$('dbStatus').textContent=ok?(h.database==='connected'?'Database connected':'Database offline'):'Database offline';const ai=h.providers.gemini_configured&&h.providers.deepseek_configured;$('aiDot').className='dot '+((h.providers.gemini_configured||h.providers.deepseek_configured)?'ok':'bad');$('aiStatus').textContent=ai?'Gemini + DeepSeek keys configured':(h.providers.gemini_configured?'Gemini key configured':h.providers.deepseek_configured?'DeepSeek key configured':'API keys missing');$('providerBadges').innerHTML=`<span class="provider ${h.providers.gemini_configured?'active':''}">Gemini · ${h.providers.gemini_configured?'key configured':'not set'}</span><span class="provider ${h.providers.deepseek_configured?'active':''}">DeepSeek · ${h.providers.deepseek_configured?'key configured':'not set'}</span>`;$('settingGemini').innerHTML=h.providers.gemini_configured?'<span style="color:var(--green)">● API key is configured · response still needs verification during analysis.</span>':'<span style="color:var(--red)">● Missing key. Add GEMINI_API_KEY to .env.</span>';$('settingDeepseek').innerHTML=h.providers.deepseek_configured?'<span style="color:var(--green)">● API key is configured · model access checked on request.</span>':'<span style="color:var(--red)">● Missing key. Add DEEPSEEK_API_KEY to .env.</span>';$('settingDb').textContent=`${h.database}. If DATABASE_URL is empty, local SQLite is used.`}catch(e){$('dbDot').className='dot bad';$('dbStatus').textContent='API unavailable';$('aiDot').className='dot bad';$('aiStatus').textContent='Backend unavailable';toast('Could not reach local API. Start the app with run_windows.bat.') }}
 function drawOverlay(imgId,canvasId,read,analysis){const img=$(imgId),canvas=$(canvasId);if(!img||!canvas)return;const render=()=>{if(!img.naturalWidth)return;canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height;ctx.clearRect(0,0,W,H);ctx.font=`bold ${Math.max(13,W/70)}px Segoe UI, Arial`;ctx.lineCap='round';ctx.lineJoin='round';const scale=read?.price_scale;const anns=(read?.annotations||[]);const px=v=>Number(v)/1000*W,py=v=>Number(v)/1000*H;for(const a of anns){if(a.type==='price_line'){if(!scale?.verified||!(a.price>=scale.bottom&&a.price<=scale.top))continue;const y=(scale.top-a.price)/(scale.top-scale.bottom)*H;const label=String(a.label||'').toUpperCase();const color=label.startsWith('SL')?'#ff6f79':label.startsWith('TP')?'#5dd6a0':'#e8b85a';ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=Math.max(2,W/950);ctx.setLineDash([W/160,W/200]);ctx.beginPath();ctx.moveTo(W*.04,y);ctx.lineTo(W*.97,y);ctx.stroke();ctx.setLineDash([]);const w=ctx.measureText(label).width+13,h=Math.max(22,W/50);const x=W*.05;ctx.fillRect(x,y-h/2,w,h);ctx.fillStyle='#09101a';ctx.fillText(label,x+6,y+Math.max(4,W/300));ctx.restore();continue}const label=String(a.label||'').slice(0,80);ctx.save();ctx.strokeStyle='#54d8c8';ctx.fillStyle='rgba(84,216,200,.10)';ctx.lineWidth=Math.max(2,W/850);if(a.type==='line'){ctx.beginPath();ctx.moveTo(px(a.x1),py(a.y1));ctx.lineTo(px(a.x2),py(a.y2));ctx.stroke();if(label){const x=px(a.x1),y=py(a.y1);ctx.fillStyle='#54d8c8';ctx.fillText(label,x+4,Math.max(16,y-6))}}else if(a.type==='rect'){ctx.fillRect(px(a.x),py(a.y),px(a.w),py(a.h));ctx.strokeRect(px(a.x),py(a.y),px(a.w),py(a.h));if(label){ctx.fillStyle='#74ebdc';ctx.fillText(label,px(a.x)+4,Math.max(16,py(a.y)-6))}}else if(a.type==='text'){ctx.fillStyle='#f1d58f';ctx.fillText(label,px(a.x),py(a.y))}ctx.restore()}};if(img.complete)render();else img.onload=render;window.addEventListener('resize',render,{passive:true})}
-function renderAnalysis(record){state.latest=record;const a=record.analysis||record;$('analysisArea').classList.remove('hidden');const ready=!!a.trade_ready,levels=!!a.levels_available,forced=!!a.forced_signal,dir=a.direction||'WAIT',bias=a.model_bias||'WAIT';$('decisionText').textContent=(ready||forced)?dir:(levels?`PROVISIONAL ${dir}`:(bias==='BUY'||bias==='SELL'?`CONDITIONAL ${bias}`:'WAIT'));$('decisionText').style.color=bias==='BUY'?'var(--green)':bias==='SELL'?'var(--red)':'var(--gold)';$('decisionSub').textContent=forced?`Grade ${a.signal_grade} · ${a.grade_summary||''}`:a.trade_ready?`${bias} bias · dual-model direction and numeric checks passed`:a.levels_available?`${bias} bias · numeric levels are provisional from one AI reader`:(bias==='BUY'||bias==='SELL'?`${bias} bias · wait for trigger and verify price/ATR; not a confirmed trade`:'No validated directional edge · review conditional BUY/SELL triggers');const iconDir=(dir==='BUY'||dir==='SELL')?dir:bias;$('decisionIcon').className='decision-icon '+iconDir.toLowerCase();$('decisionIcon').textContent=iconDir==='BUY'?'↗':iconDir==='SELL'?'↘':'Ⅱ';$('confidenceText').textContent=a.confidence??0;$('confidenceMeter').style.width=Math.max(0,Math.min(100,a.confidence||0))+'%';$('readinessBadge').className='badge '+((a.trade_ready||(forced&&['A','B'].includes(a.signal_grade)))?'good':'warn');$('readinessBadge').textContent=forced?`FORCED SIGNAL · GRADE ${a.signal_grade}`:a.trade_ready?'DUAL AI · INPUTS CORROBORATED':a.levels_available?'SINGLE AI · PROVISIONAL LEVELS':(bias==='BUY'||bias==='SELL'?'CONDITIONAL · NOT CONFIRMED':'WAIT / NO NUMERIC EDGE');$('levelsBadge').className='badge '+((a.trade_ready||(forced&&['A','B'].includes(a.signal_grade)))?'good':'warn');$('levelsBadge').textContent=forced?(levels?`LEVELS · ATR ${(a.signal_basis&&a.signal_basis.atr)||'n/a'}`:'NO PRICE · LEVELS OMITTED'):a.trade_ready?'ATR CALCULATED · DUAL AI':a.levels_available?'ATR CALCULATED · PROVISIONAL':'BLOCKED · PRICE/ATR MISSING';$('providerResults').innerHTML=(a.signal_grade?`<span class="badge ${['A','B'].includes(a.signal_grade)?'good':'warn'}">GRADE ${escapeHtml(a.signal_grade)}</span>`:'')+(a.providers||[]).map(p=>`<span class="badge">${escapeHtml(p.name)} · ${escapeHtml(p.direction)} · ${Math.round(p.confidence||0)}%</span>`).join('')+(Object.keys(a.provider_errors||{}).length?Object.entries(a.provider_errors).map(([k,v])=>`<span class="badge warn">${escapeHtml(k)} error</span>`).join(''):'');$('rationaleText').textContent=a.setup_rationale||'The AI did not return a usable rationale.';
-[['mEntry','entry_price'],['mEntryLow','entry_low'],['mEntryHigh','entry_high'],['mSL','stop_loss'],['mTP1','take_profit_1'],['mTP2','take_profit_2']].forEach(([id,key])=>$(id).textContent=a.levels_available?fmt(a[key]):'—');$('atrMethod').textContent=a.atr_method||'No levels calculated: make the screenshot price and ATR value readable on both timeframes.';$('alignmentBadge').textContent=(a.timeframe_alignment||'unclear').toUpperCase();$('tfSummary').innerHTML=(a.chart_reads||[]).map(r=>`<div style="border:1px solid #28364a;background:#0b121d;border-radius:11px;padding:12px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center"><strong>${escapeHtml(r.timeframe)}</strong><span class="badge ${r.trend_agreement?'good':'warn'}">${escapeHtml(r.trend||'unclear')}</span></div><div class="tag-row"><span class="chip" style="padding:4px 7px">Price: ${r.current_price_verified?fmt(r.current_price):(r.current_price_est!=null?'~'+fmt(r.current_price_est)+' (est.)':'unverified')}</span><span class="chip" style="padding:4px 7px">ATR: ${r.atr_verified?fmt(r.atr_value,3):(r.atr_est!=null?'~'+fmt(r.atr_est,3)+' (est.)':'unverified')}</span></div><p class="bodycopy" style="font-size:11px;margin:9px 0 0">${escapeHtml(r.structure||'No structure read available.')}</p></div>`).join('');const notes=a.risk_notes||[];$('riskNotes').innerHTML=notes.length?notes.map(n=>`<li>${escapeHtml(n)}</li>`).join(''):'<li>No validation warnings.</li>';$('checksCount').textContent=`${Object.values(a.validation||{}).filter(v=>v===true).length} checks passed`;const scenarios=a.conditional_setups||[];$('scenarioGrid').innerHTML=scenarios.map(s=>`<div class="metric" style="border-color:${s.direction==='BUY'?'#5dd6a045':'#ff6f7945'}"><label style="color:${s.direction==='BUY'?'var(--green)':'var(--red)'}">${escapeHtml(s.title||s.direction+' scenario')}</label><p class="bodycopy" style="margin:5px 0 10px">${escapeHtml(s.trigger||'No clear trigger provided.')}</p><small style="color:var(--muted)">Invalidation: ${escapeHtml(s.invalidation||'Not specified')}</small><div class="tag-row"><span class="badge warn">${s.numeric_levels_available?'Numeric reference available':'Conditional · no order'}</span></div></div>`).join('')||'<div class="metric"><p class="bodycopy">No scenario returned. Try a clearer chart image.</p></div>';
-const img1=record.image_primary_url||'/uploads/'+record.image_primary,img2=record.image_secondary_url||'/uploads/'+record.image_secondary;$('resultImg1').src=img1;$('resultImg2').src=img2;$('chartTitle1').textContent=`${record.tf_primary||a.chart_reads?.[0]?.timeframe||'Primary'} · Structure`; $('chartTitle2').textContent=`${record.tf_secondary||a.chart_reads?.[1]?.timeframe||'Secondary'} · Context`;$('chartFoot1').textContent=`Trend: ${a.chart_reads?.[0]?.trend||'unclear'} · Price: ${a.chart_reads?.[0]?.current_price_verified?fmt(a.chart_reads[0].current_price):'unverified'} · ATR: ${a.chart_reads?.[0]?.atr_verified?fmt(a.chart_reads[0].atr_value,3):'unverified'}`;$('chartFoot2').textContent=`Trend: ${a.chart_reads?.[1]?.trend||'unclear'} · Price: ${a.chart_reads?.[1]?.current_price_verified?fmt(a.chart_reads[1].current_price):'unverified'} · ATR: ${a.chart_reads?.[1]?.atr_verified?fmt(a.chart_reads[1].atr_value,3):'unverified'}`;drawOverlay('resultImg1','canvas1',a.chart_reads?.[0],a);drawOverlay('resultImg2','canvas2',a.chart_reads?.[1],a);$('savedNote').textContent=record.history_saved===false?'Warning: Analysis completed but history could not be saved. Check Neon/SQLite database connection.':`Saved to Signal History${record.id?` · ID #${record.id}`:''} · ${timeFmt(record.created_at)}.`;}
-$('analyzeBtn').addEventListener('click',async()=>{if(!state.files[0]||!state.files[1])return;const a=$('tfPrimary').value,b=$('tfSecondary').value;if(a===b){toast('Choose two different timeframes.');return}const btn=$('analyzeBtn'),cover=$('loadingCover');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Analyzing…';cover.classList.add('show');try{const fd=new FormData();fd.append('primary_image',state.files[0]);fd.append('secondary_image',state.files[1]);fd.append('symbol',$('imgSymbol').value);fd.append('tf_primary',a);fd.append('tf_secondary',b);const data=await request('/api/analyze',{method:'POST',body:fd});renderAnalysis(data);await loadHistory();toast(data.history_saved===false?'Analysis complete, but history could not be saved.':'Analysis complete. Check numeric validation before using any levels.')}catch(e){toast(e.message)}finally{btn.disabled=!(state.files[0]&&state.files[1]);btn.innerHTML='<span>✦</span> Analyze XAUUSD <span>→</span>';cover.classList.remove('show')}});
+function renderAnalysis(record){
+ state.latest=record;const a=record.analysis||record;$('analysisArea').classList.remove('hidden');
+ renderPipelineStages($('analysisStageReport'),a.pipeline_stages||[]);
+ const ready=!!a.trade_ready,levels=!!a.levels_available,dir=a.direction||'WAIT';
+ $('decisionText').textContent=ready?dir:'WAIT';$('decisionText').style.color=ready?(dir==='BUY'?'var(--green)':'var(--red)'):'var(--gold)';
+ $('decisionSub').textContent=ready?`${dir} · validated completed-candle ICT setup`:'No actionable setup · inspect stage outputs and trade blockers';
+ $('decisionIcon').className='decision-icon '+(ready?dir.toLowerCase():'wait');$('decisionIcon').textContent=ready?(dir==='BUY'?'↗':'↘'):'Ⅱ';
+ $('confidenceText').textContent=a.confidence??0;$('confidenceMeter').style.width=Math.max(0,Math.min(100,a.confidence||0))+'%';
+ $('readinessBadge').className='badge '+(ready?'good':'warn');$('readinessBadge').textContent=ready?'LIVE ICT · VALIDATED':'WAIT · NO VALIDATED SETUP';
+ $('levelsBadge').className='badge '+(levels?'good':'warn');$('levelsBadge').textContent=levels?'STRUCTURAL LEVELS · LIVE DATA':'NO VALIDATED LEVELS';
+ $('providerResults').innerHTML=(a.providers||[]).map(p=>`<span class="badge">${escapeHtml(p.name)} · visual extraction · ${Math.round(p.confidence||0)}%</span>`).join('')+
+  (Object.keys(a.provider_errors||{}).length?Object.keys(a.provider_errors).map(k=>`<span class="badge warn">${escapeHtml(k)} error</span>`).join(''):'');
+ $('rationaleText').textContent=a.setup_rationale||'Visual extraction completed; no validated market setup was found.';
+ [['mEntry','entry_price'],['mEntryLow','entry_low'],['mEntryHigh','entry_high'],['mSL','stop_loss'],['mTP1','take_profit_1'],['mTP2','take_profit_2']]
+  .forEach(([id,key])=>$(id).textContent=levels?fmt(a[key]):'—');
+ $('atrMethod').textContent=a.atr_method||'No actionable levels until a live ICT setup is validated.';
+ $('alignmentBadge').textContent=(a.timeframe_alignment||'visual evidence only').toUpperCase();
+ const comparisons=a.market_verification?.feeds||[];
+ $('tfSummary').innerHTML=(a.chart_reads||[]).map((read,index)=>{
+  const live=comparisons[index]||{};
+  const observations=read.visual_observations||[];
+  const quality=observations.length?observations.map(item=>`${item.provider}: blur ${item.blur_risk||'unclear'}, glare ${item.glare||'unclear'}, crop ${item.cropped||'unclear'}, rotation ${item.rotated||'unclear'}, header ${item.symbol_header_visible===true?'visible':'unclear'}, timeframe ${item.timeframe_label_visible===true?'visible':'unclear'}, plot ${item.chart_area_visibility??'unclear'}%`).join(' · '):'No quality observations returned.';
+  return `<div style="border:1px solid #28364a;background:#0b121d;border-radius:11px;padding:12px">
+   <div style="display:flex;justify-content:space-between;gap:10px;align-items:center"><strong>${escapeHtml(read.timeframe)}</strong><span class="badge">${escapeHtml(read.trend||'unclear')}</span></div>
+   <div class="tag-row"><span class="chip" style="padding:4px 7px">Screenshot quote: ${read.current_price_verified?fmt(read.current_price):'unreadable'}</span>
+   <span class="chip" style="padding:4px 7px">Live close: ${live.live_price!=null?fmt(live.live_price):'unavailable'}</span>
+   <span class="chip" style="padding:4px 7px">Comparison: ${escapeHtml(live.status||'not checked')}</span></div>
+   <p class="bodycopy" style="font-size:11px;margin:9px 0 0">${escapeHtml(read.structure||'No structure read available.')} · ${escapeHtml(quality)} · Axis: ${escapeHtml(read.price_scale?.verified?'readable':'unclear')}</p>
+  </div>`;
+ }).join('');
+ const blockers=a.market_ict_scan?.trade_blockers||[];
+ const notes=[...(a.risk_notes||[]),...blockers.map(item=>`Trade blocked: ${item}.`)];
+ $('riskNotes').innerHTML=notes.length?notes.map(note=>`<li>${escapeHtml(note)}</li>`).join(''):'<li>No validation warnings.</li>';
+ $('checksCount').textContent=`${Object.values(a.validation||{}).filter(value=>value===true).length} visual checks · ${blockers.length} trade blockers`;
+ const summaries=a.chart_reconstruction||[];
+ $('scenarioGrid').innerHTML=summaries.map(item=>`<div class="metric"><label>${escapeHtml(item.timeframe)} · reconstructed evidence</label>
+  <p class="bodycopy">${(item.readable_price_labels||[]).length} readable explicit price labels. OHLC: not inferred from screenshot pixels.</p>
+  <small>${escapeHtml((item.missing_data||[]).join(' '))}</small></div>`).join('')||'<div class="metric"><p class="bodycopy">No chart reconstruction data.</p></div>';
+ const img1=record.image_primary_url||'/uploads/'+record.image_primary,img2=record.image_secondary_url||'/uploads/'+record.image_secondary;
+ $('resultImg1').src=img1;$('resultImg2').src=img2;
+ $('chartTitle1').textContent=`${record.tf_primary||a.chart_reads?.[0]?.timeframe||'Primary'} · Visual evidence`;
+ $('chartTitle2').textContent=`${record.tf_secondary||a.chart_reads?.[1]?.timeframe||'Secondary'} · Visual evidence`;
+ $('chartFoot1').textContent=`Trend: ${a.chart_reads?.[0]?.trend||'unclear'} · Screenshot price: ${a.chart_reads?.[0]?.current_price_verified?fmt(a.chart_reads[0].current_price):'unreadable'} · Live data shown separately`;
+ $('chartFoot2').textContent=`Trend: ${a.chart_reads?.[1]?.trend||'unclear'} · Screenshot price: ${a.chart_reads?.[1]?.current_price_verified?fmt(a.chart_reads[1].current_price):'unreadable'} · Live data shown separately`;
+ drawOverlay('resultImg1','canvas1',a.chart_reads?.[0],a);drawOverlay('resultImg2','canvas2',a.chart_reads?.[1],a);
+ $('savedNote').textContent=record.history_saved===false?`Warning: ${record.history_error||'Analysis history could not be saved.'}`:`Saved to Signal History${record.id?` · ID #${record.id}`:''} · ${timeFmt(record.created_at)}.`;
+}
+$('analyzeBtn').addEventListener('click',async()=>{
+ if(!state.files[0]||!state.files[1]||!state.prepared[0]||!state.prepared[1])return;
+ const primaryTf=$('tfPrimary').value,secondaryTf=$('tfSecondary').value;
+ if(primaryTf===secondaryTf){toast('Choose two different timeframes.');return}
+ const button=$('analyzeBtn'),cover=$('loadingCover'),stages=[];
+ button.disabled=true;button.innerHTML='<span class="spinner"></span> Analyzing…';cover.classList.add('show');
+ $('analysisProgressTitle').textContent='Uploading preserved originals and normalized analysis images…';
+ renderPipelineStages($('analysisProgressStages'),stages);
+ try{
+  const form=new FormData();
+  form.append('primary_image',state.files[0]);form.append('secondary_image',state.files[1]);
+  form.append('primary_analysis_image',state.prepared[0]);form.append('secondary_analysis_image',state.prepared[1]);
+  form.append('image_preparation',JSON.stringify(state.preparation));
+  form.append('symbol',$('imgSymbol').value);form.append('tf_primary',primaryTf);form.append('tf_secondary',secondaryTf);
+  const record=await analyzeStream(form,event=>{
+   if(event.type==='stage'){
+    const position=stages.findIndex(stage=>stage.id===event.stage.id);
+    if(position<0)stages.push(event.stage);else stages[position]=event.stage;
+    $('analysisProgressTitle').textContent=`${event.stage.name} · ${event.stage.status==='running'?'in progress':`${Math.round(event.stage.duration_ms||0)} ms`}`;
+    renderPipelineStages($('analysisProgressStages'),stages);
+   }
+  });
+  renderAnalysis(record);await loadHistory();
+  toast(record.history_saved===false?'Analysis complete, but history could not be saved.':'Analysis complete. Review evidence, feed status and trade blockers.');
+ }catch(error){
+  const detail=error instanceof Error?error.message:String(error);
+  $('analysisProgressTitle').textContent='Analysis failed';state.latest=null;
+  stages.push({id:'analysis_error',name:'Analysis request',status:'failed',duration_ms:0,error:detail});
+  $('analysisArea').classList.remove('hidden');renderPipelineStages($('analysisStageReport'),stages);
+  $('decisionIcon').className='decision-icon wait';$('decisionIcon').textContent='Ⅱ';
+  $('decisionText').textContent='WAIT';$('decisionSub').textContent='Analysis failed; no new trade decision was produced.';
+  $('confidenceText').textContent='0';$('confidenceMeter').style.width='0%';$('providerResults').textContent='No visual report was produced.';
+  $('readinessBadge').className='badge warn';$('readinessBadge').textContent='ANALYSIS FAILED';
+  $('levelsBadge').className='badge warn';$('levelsBadge').textContent='NO VALIDATED LEVELS';
+  $('rationaleText').textContent=detail;$('riskNotes').innerHTML=`<li>${escapeHtml(detail)}</li>`;
+  ['mEntry','mEntryLow','mEntryHigh','mSL','mTP1','mTP2'].forEach(id=>$(id).textContent='—');
+  toast(detail);
+ }
+ finally{button.disabled=!(state.files[0]&&state.files[1]&&state.prepared[0]&&state.prepared[1]);updateSymbolCopy();cover.classList.remove('show')}
+});
+const tradePolicyRow=Array.from(document.querySelectorAll('#page-settings .settings-row')).find(row=>row.querySelector('strong')?.textContent==='Trade-level policy');
+if(tradePolicyRow){const label=tradePolicyRow.querySelector('p'),copy=tradePolicyRow.querySelector('.bodycopy');if(label)label.textContent='Image validation and force-signal isolation';if(copy)copy.textContent='Image analysis uses strict evidence-based validation. IMAGE_FORCE_SIGNAL=false by default and is independent of FORCE_SIGNAL. FORCE_SIGNAL never overrides image validation. Screenshot-derived entry, stop and target levels are never issued; any plan requires a validated ICT setup from completed market candles.'}
+const atrPolicyRow=Array.from(document.querySelectorAll('#page-settings .settings-row')).find(row=>row.querySelector('strong')?.textContent==='ATR formula');
+if(atrPolicyRow){const title=atrPolicyRow.querySelector('strong'),label=atrPolicyRow.querySelector('p'),copy=atrPolicyRow.querySelector('.bodycopy');if(title)title.textContent='Image analysis trade levels';if(label)label.textContent='Market structure only';if(copy)copy.textContent='No fixed ATR formula is used for screenshot analysis. Structural invalidation and liquidity targets are shown only when supported by a validated ICT setup on completed live-market candles.'}
+const liveTerminalRow=Array.from(document.querySelectorAll('#page-settings .settings-row')).find(row=>row.querySelector('strong')?.textContent==='Live Market Terminal');
+if(liveTerminalRow){const copy=liveTerminalRow.querySelector('.bodycopy');if(copy)copy.textContent='The Live Terminal uses its own quote polling, technical scan and optional DeepSeek review. Screenshot Analyzer is a separate upload flow: it normalizes images, verifies them against completed candles and evaluates deterministic ICT setups. Their signal-forcing settings and state are independent.'}
 function resultBadge(x){if(!x)return '<span class="tiny">—</span>';const win=x==='TP1'||x==='TP2';return `<span class="badge ${win?'good':x==='SL'?'warn':''}">${win?'WIN ':x==='SL'?'LOSS ':''}${escapeHtml(x==='SKIP'?'not taken':x)}</span>`}
 async function loadStats(){try{const s=await request('/api/stats');$('statsLine').textContent=s.resolved?`Real results: ${s.wins}W / ${s.losses}L · win rate ${s.win_rate}% · avg ${s.avg_r>=0?'+':''}${s.avg_r}R per trade (${s.resolved} marked, ${s.unresolved} unmarked) · by grade: `+Object.entries(s.by_grade).map(([g,v])=>`${g} ${v.win_rate}% (${v.resolved})`).join(' · '):`No results marked yet (${s.unresolved||0} signals). Open a signal and mark TP1 / TP2 / SL to measure the real win rate.`}catch(e){}}
 async function setOutcome(id,result){try{await request(`/api/history/${id}/outcome`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({result})});toast('Result saved: '+result);await loadHistory();await openHistory(id)}catch(e){toast(e.message)}}
@@ -148,59 +306,6 @@ async function sendChat(message){if(!message.trim()||state.chatBusy)return;state
 $('chatForm').addEventListener('submit',e=>{e.preventDefault();const t=$('chatInput').value;$('chatInput').value='';sendChat(t)});document.querySelectorAll('.ask').forEach(b=>b.addEventListener('click',()=>{navTo('chat');sendChat(b.dataset.ask)}));$('refreshBtn').addEventListener('click',()=>{checkHealth();loadHistory()});
 checkHealth();loadHistory();
 </script>
-<script>
-const renderAnalysisBase = renderAnalysis;
-const signalGuard = document.querySelector('#page-analyzer .notice div');
-if (signalGuard) signalGuard.innerHTML = '<strong style="color:#e8d59f">Directional candidate, not a guarantee.</strong> Pullback zones are conditional screenshot-based estimates. Grade describes chart/input quality, not probability of winning; verify the live XAUUSD price before acting.';
-const policyRow = Array.from(document.querySelectorAll('#page-settings .settings-row')).find(row => row.querySelector('strong')?.textContent === 'Trade-level policy');
-if (policyRow) {
-  const policyText = policyRow.querySelector('.bodycopy');
-  if (policyText) policyText.textContent = 'FORCE_SIGNAL=true shows a best-effort BUY/SELL candidate when a direction can be inferred; it may still return WAIT when the chart is unreadable. Approximate pullback zones are conditional screenshot levels, not validated live entries. FORCE_SIGNAL=false uses strict validation.';
-}
-renderAnalysis = function(record){
-  renderAnalysisBase(record);
-  const analysis = record.analysis || record;
-  const grid = $('scenarioGrid');
-  const note = grid.nextElementSibling;
-  if (note) note.textContent = 'Pullback prices are AI chart reads or estimates from uploaded screenshots, not live quotes or confirmed orders. Verify the current price in MT5; WAIT is still appropriate when the chart is unclear.';
-  (analysis.conditional_setups || []).forEach((setup, index) => {
-    if (typeof setup.pullback_low !== 'number' || typeof setup.pullback_high !== 'number' ||
-        !Number.isFinite(setup.pullback_low) || !Number.isFinite(setup.pullback_high)) return;
-    const card = grid.children[index];
-    if (!card) return;
-    const zone = document.createElement('div');
-    zone.className = 'metric';
-    zone.style.marginTop = '10px';
-    const label = document.createElement('label');
-    label.textContent = 'Pullback watch zone · conditional';
-    const value = document.createElement('strong');
-    value.className = 'mono';
-    const approx = setup.pullback_quality === 'axis_estimate' ? '≈ ' : '';
-    value.textContent = `${approx}${fmt(setup.pullback_low)} – ${approx}${fmt(setup.pullback_high)}`;
-    const source = document.createElement('small');
-    const qualityText = {
-      corroborated: 'Both AI readers identified similar printed levels; still verify live.',
-      single_read: 'Single-AI chart read; verify against your live chart.',
-      axis_estimate: 'Approximate interpolation from the screenshot price scale.',
-    }[setup.pullback_quality] || 'Approximate chart level; verify before acting.';
-    source.textContent = `${qualityText} ${setup.pullback_agreement === 'models_differed' ? 'AI estimates differ. ' : ''}${setup.pullback_provider ? `Source: ${setup.pullback_provider}.` : ''}`;
-    const basis = document.createElement('small');
-    basis.textContent = `Basis: ${setup.pullback_basis || 'visible support/resistance retest area'}`;
-    zone.append(label, value, source, basis);
-    card.append(zone);
-  });
-  if (analysis.forced_signal) {
-    $('readinessBadge').className = 'badge warn';
-    $('readinessBadge').textContent = `DIRECTIONAL CANDIDATE · GRADE ${analysis.signal_grade || '—'}`;
-    $('levelsBadge').className = 'badge warn';
-    $('levelsBadge').textContent = analysis.levels_available ? 'APPROX. LEVELS · VERIFY LIVE' : 'NO PRICE · LEVELS OMITTED';
-    $('decisionSub').textContent = `Candidate only · ${analysis.grade_summary || 'Screenshot-derived, not validated against live market data.'}`;
-    const gradeBadge = $('providerResults').querySelector('.badge');
-    if (gradeBadge && gradeBadge.textContent.startsWith('GRADE ')) gradeBadge.className = 'badge warn';
-  }
-};
-</script>
-
 <script>
 function liveFmt(value, digits=2){
   if(typeof value!=='number'||!Number.isFinite(value)) return '—';

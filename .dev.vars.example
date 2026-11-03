@@ -4,5 +4,6 @@ APP_PASSWORD=
 DATABASE_URL=
 GEMINI_API_KEY=
 DEEPSEEK_API_KEY=
+IMAGE_FORCE_SIGNAL=false
 # Optional: Finnhub economic calendar (free key, includes Actual values). Without it the free Forex Factory JSON is used.
 FINNHUB_API_KEY=

@@ -1,3 +1,5 @@
+import spec from "../shared/ict-engine-spec.json" with { type: "json" };
+import imageAnalysisSpec from "../shared/image-analysis-spec.json" with { type: "json" };
 import { analyzeImages, chatWithDeepSeek, reviewIctWithDeepSeek } from "./ai.ts";
 import { buildTradeRead } from "./trade-engine.ts";
 import { calculateLiveScan, chatWithLiveMarket, fetchLiveMarket, reviewLiveMarket } from "./live-market.ts";
@@ -7,7 +9,7 @@ import type { IctScanResult, IctTimeframe } from "./ict-engine.ts";
 import { buildDailyStats } from "./daily-stats.ts";
 import type { AnalysisRecord, ChartImage, Env, JsonRecord } from "./types";
 import { createSql, firstRow, logDatabaseError } from "./db.ts";
-import { normalizeSymbol } from "./symbols.ts";
+import { matchesSymbol, normalizeSymbol, symbolProfile } from "./symbols.ts";
 import { analyzeEvent, eventsPayload, newsContext } from "./news.ts";
 
 const TIMEFRAMES = new Set(["M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H2", "H4", "D1", "W1", "MN1"]);
@@ -133,6 +135,30 @@ function imageType(bytes: Uint8Array): { mimeType: string; extension: string } |
   return null;
 }
 
+function jpegDimensions(bytes: Uint8Array): { width: number; height: number } | null {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  const startOfFrame = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  let offset = 2;
+  while (offset + 3 < bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    while (bytes[offset] === 0xff) offset++;
+    const marker = bytes[offset++];
+    if (marker === 0xd9 || marker === 0xda) return null;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 1 >= bytes.length) return null;
+    const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) return null;
+    if (startOfFrame.has(marker)) {
+      if (segmentLength < 7) return null;
+      const height = (bytes[offset + 3] << 8) | bytes[offset + 4];
+      const width = (bytes[offset + 5] << 8) | bytes[offset + 6];
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
 function toBase64(bytes: Uint8Array): string {
   const chunkSize = 0x8000;
   let binary = "";
@@ -143,7 +169,9 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 async function imageFromForm(
-  value: File | string | null,
+  value: unknown,
+  normalizedValue: unknown,
+  preparation: JsonRecord,
   maxBytes: number,
   bucket: R2Bucket,
 ): Promise<ChartImage> {
@@ -152,9 +180,55 @@ async function imageFromForm(
   const bytes = new Uint8Array(await value.arrayBuffer());
   const type = imageType(bytes);
   if (!type) throw new ApiError(415, "Use a readable PNG, JPG/JPEG or WEBP chart screenshot.");
+  let inferenceBytes = bytes;
+  let inferenceMimeType = type.mimeType;
+  const warnings: string[] = [];
+  if (normalizedValue instanceof File) {
+    if (!normalizedValue.size || normalizedValue.size > maxBytes) {
+      throw new ApiError(413, `Each normalized image must be under ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
+    }
+    inferenceBytes = new Uint8Array(await normalizedValue.arrayBuffer());
+    const normalizedType = imageType(inferenceBytes);
+    if (normalizedType?.mimeType !== "image/jpeg" || inferenceBytes.at(-2) !== 0xff || inferenceBytes.at(-1) !== 0xd9) {
+      throw new ApiError(415, "The normalized analysis image is not a complete JPEG.");
+    }
+    const policy = imageAnalysisSpec.normalization;
+    const actualDimensions = jpegDimensions(inferenceBytes);
+    const width = finiteNumber(preparation.normalized_width), height = finiteNumber(preparation.normalized_height);
+    const sourceWidth = finiteNumber(preparation.source_width), sourceHeight = finiteNumber(preparation.source_height);
+    if (preparation.mode !== "browser_canvas" || width === null || height === null
+      || width < policy.minimum_width || height < policy.minimum_height
+      || Math.max(width, height) > policy.max_dimension || !actualDimensions
+      || width !== actualDimensions.width || height !== actualDimensions.height
+      || sourceWidth === null || sourceHeight === null
+      || sourceWidth < policy.minimum_width || sourceHeight < policy.minimum_height) {
+      throw new ApiError(400, "Normalized image metadata does not match the shared preparation policy.");
+    }
+    const expectedScale = Math.min(1, policy.max_dimension / Math.max(sourceWidth, sourceHeight));
+    if (width !== Math.max(1, Math.round(sourceWidth * expectedScale))
+      || height !== Math.max(1, Math.round(sourceHeight * expectedScale))) {
+      throw new ApiError(400, "Normalized image dimensions do not match the shared aspect-preserving resize policy.");
+    }
+    inferenceMimeType = "image/jpeg";
+  } else {
+    warnings.push("Browser-normalized analysis image was not provided; legacy image bytes are used without platform-equivalent normalization.");
+  }
   const key = `${crypto.randomUUID().replaceAll("-", "")}.${type.extension}`;
   await bucket.put(key, bytes, { httpMetadata: { contentType: type.mimeType } });
-  return { mimeType: type.mimeType, base64: toBase64(bytes), key };
+  return {
+    mimeType: inferenceMimeType,
+    base64: toBase64(inferenceBytes),
+    key,
+    preparation: {
+      ...preparation,
+      source_format: type.mimeType,
+      source_bytes: bytes.length,
+      normalized_format: inferenceMimeType,
+      normalized_bytes: inferenceBytes.length,
+      mode: normalizedValue instanceof File ? "browser_canvas" : "legacy_unprepared",
+      warnings,
+    },
+  };
 }
 
 async function getHealth(env: Env): Promise<Response> {
@@ -179,10 +253,15 @@ async function getHealth(env: Env): Promise<Response> {
     live_terminal: true,
     live_market_provider: env.TWELVEDATA_API_KEY ? "Twelve Data with Yahoo Finance fallback" : "Yahoo Finance XAUUSD=X",
     force_signal: env.FORCE_SIGNAL?.trim().toLowerCase() !== "false",
+    image_force_signal: env.IMAGE_FORCE_SIGNAL?.trim().toLowerCase() === "true",
   });
 }
 
-async function analyze(request: Request, env: Env): Promise<Response> {
+async function analyze(
+  request: Request,
+  env: Env,
+  sendProgress?: (event: JsonRecord) => void,
+): Promise<Response> {
   let form: FormData;
   try {
     form = await request.formData();
@@ -203,9 +282,61 @@ async function analyze(request: Request, env: Env): Promise<Response> {
   const maxUploadMb = Math.max(1, Math.min(25, finiteNumber(env.MAX_UPLOAD_MB) || 12));
   const maxBytes = maxUploadMb * 1024 * 1024;
   const savedImages: ChartImage[] = [];
+  const stages: JsonRecord[] = [];
+  let activeStage: JsonRecord | null = null;
+  let stageStartedAt = 0;
+  const startStage = (id: string, input: JsonRecord) => {
+    const definition = imageAnalysisSpec.stages.find((entry) => entry.id === id);
+    if (!definition) throw new Error(`Unknown image-analysis stage '${id}'.`);
+    activeStage = {
+      id, name: definition.name, status: "running", started_at: new Date().toISOString(),
+      duration_ms: null, input, output: null, error: null,
+    };
+    stageStartedAt = Date.now();
+    stages.push(activeStage);
+    sendProgress?.({ type: "stage", stage: { ...activeStage } });
+  };
+  const finishStage = (output: JsonRecord) => {
+    if (!activeStage) return;
+    activeStage.status = "complete";
+    activeStage.duration_ms = Math.max(0, Date.now() - stageStartedAt);
+    activeStage.output = output;
+    sendProgress?.({ type: "stage", stage: { ...activeStage } });
+    activeStage = null;
+  };
+  const failStage = (error: unknown) => {
+    if (!activeStage) return;
+    activeStage.status = "failed";
+    activeStage.duration_ms = Math.max(0, Date.now() - stageStartedAt);
+    activeStage.error = error instanceof Error ? error.message.slice(0, 350) : String(error).slice(0, 350);
+    sendProgress?.({ type: "stage", stage: { ...activeStage } });
+    activeStage = null;
+  };
   try {
-    savedImages.push(await imageFromForm(form.get("primary_image"), maxBytes, env.UPLOADS));
-    savedImages.push(await imageFromForm(form.get("secondary_image"), maxBytes, env.UPLOADS));
+    startStage("image_intake", { symbol, timeframes: [tfPrimary, tfSecondary] });
+    let imagePreparation: unknown = [];
+    try {
+      imagePreparation = JSON.parse(form.get("image_preparation")?.toString() || "[]");
+    } catch {
+      badRequest("Image preparation metadata must be valid JSON.");
+    }
+    const preparations = Array.isArray(imagePreparation)
+      ? imagePreparation.map((item) => item && typeof item === "object" && !Array.isArray(item) ? item as JsonRecord : {})
+      : [{}, {}];
+    if (preparations.length !== 2) preparations.splice(0, preparations.length, {}, {});
+    savedImages.push(await imageFromForm(
+      form.get("primary_image"), form.get("primary_analysis_image"), preparations[0], maxBytes, env.UPLOADS,
+    ));
+    savedImages.push(await imageFromForm(
+      form.get("secondary_image"), form.get("secondary_analysis_image"), preparations[1], maxBytes, env.UPLOADS,
+    ));
+    finishStage({
+      images: savedImages.map(image => image.preparation || {}),
+      originals_preserved: true,
+      normalization_consistent: savedImages.every(image => image.preparation?.mode === "browser_canvas"),
+    });
+
+    startStage("visual_extraction", { providers: ["Gemini", "DeepSeek"], image_count: 2 });
     let aiResults: Awaited<ReturnType<typeof analyzeImages>>;
     try {
       aiResults = await analyzeImages(env, savedImages, tfPrimary, tfSecondary, symbol);
@@ -221,8 +352,184 @@ async function analyze(request: Request, env: Env): Promise<Response> {
       const errors = Object.entries(aiResults.providerErrors).map(([provider, message]) => `${provider}: ${message}`).join(" | ");
       throw new ApiError(502, `All configured AI providers failed. ${errors || "Check API keys/model names."}`);
     }
+    const visualQuality = [tfPrimary, tfSecondary].map((timeframe, index) => ({
+      timeframe,
+      observations: aiResults.providerResults.map(item => {
+        const reads = Array.isArray(item.chart_reads) ? item.chart_reads : [];
+        const read = reads[index] && typeof reads[index] === "object" ? reads[index] as JsonRecord : {};
+        return {
+          provider: String(item.provider || "unknown"),
+          symbol_header_visible: read.symbol_header_visible ?? null,
+          timeframe_label_visible: read.timeframe_label_visible ?? null,
+          chart_area_visibility: read.chart_area_visibility ?? null,
+          price_axis_visibility: read.price_axis_visibility ?? null,
+          indicator_panel_visibility: read.indicator_panel_visibility ?? null,
+          glare: read.glare ?? null,
+          rotated: read.rotated ?? null,
+          cropped: read.cropped ?? null,
+          blur_risk: read.blur_risk ?? null,
+        };
+      }),
+    }));
+    finishStage({
+      providers_succeeded: aiResults.providerResults.map(item => String(item.provider || "unknown")),
+      provider_errors: aiResults.providerErrors,
+      chart_reads: aiResults.providerResults.reduce((sum, item) => sum + (Array.isArray(item.chart_reads) ? item.chart_reads.length : 0), 0),
+      visual_quality: visualQuality,
+    });
 
+    startStage("chart_reconstruction", { timeframes: [tfPrimary, tfSecondary] });
+    const reconstruction = [tfPrimary, tfSecondary].map((timeframe, index) => {
+      const reads = aiResults.providerResults.flatMap((item) =>
+        Array.isArray(item.chart_reads) && item.chart_reads[index] ? [item.chart_reads[index] as JsonRecord] : []);
+      return {
+        timeframe,
+        readable_price_labels: reads.flatMap(read =>
+          read.current_price_readable === true && typeof read.current_price === "number" ? [read.current_price] : []),
+        axis_scale: reads.map(read => ({
+          top: read.price_scale_top, bottom: read.price_scale_bottom, readable: read.price_scale_readable === true,
+        })),
+        reconstructed_ohlc: null,
+        missing_data: ["OHLC candles are not reconstructed from screenshot pixels; use validated market-feed candles."],
+      };
+    });
+    finishStage({ charts: reconstruction });
+
+    startStage("live_verification", { requested_timeframes: [tfPrimary, tfSecondary] });
+    const supportedFrames = [...new Set([tfPrimary, tfSecondary].filter(isIctTimeframe))];
+    const settledFeeds = await Promise.allSettled(supportedFrames.map(frame => fetchMarketCandles(symbol, frame, env)));
+    const feeds: Record<string, Awaited<ReturnType<typeof fetchMarketCandles>>> = {};
+    const feedErrors: Record<string, string> = {};
+    settledFeeds.forEach((result, index) => {
+      const timeframe = supportedFrames[index];
+      if (result.status === "fulfilled") feeds[timeframe] = result.value;
+      else feedErrors[timeframe] = result.reason instanceof Error ? result.reason.message.slice(0, 260) : String(result.reason).slice(0, 260);
+    });
+    const profile = symbolProfile(symbol);
+    const comparisons = [tfPrimary, tfSecondary].map((timeframe, index) => {
+      const feed = feeds[timeframe];
+      const reads = aiResults.providerResults.flatMap((item) =>
+        Array.isArray(item.chart_reads) && item.chart_reads[index] ? [item.chart_reads[index] as JsonRecord] : []);
+      const screenshotPrice = reads.find(read => read.current_price_readable === true
+        && typeof read.current_price === "number")?.current_price;
+      const comparison = !feed ? "feed_unavailable"
+        : typeof screenshotPrice !== "number" ? "screenshot_quote_unreadable"
+          : Math.abs(screenshotPrice - feed.price) <= Math.max(profile.price_abs, feed.price * profile.price_pct) ? "match" : "mismatch";
+      return {
+        timeframe, status: comparison, screenshot_price: screenshotPrice ?? null, live_price: feed?.price ?? null,
+        feed_timestamp: feed?.last_bar_time ?? null, feed_source: feed?.source ?? null,
+        is_stale: feed?.is_stale ?? null, market_closed: feed?.market_closed ?? null,
+        data_quality_status: feed?.data_quality_status ?? null,
+      };
+    });
+    const marketVerification = {
+      available: comparisons.every(item => feeds[item.timeframe] !== undefined),
+      feeds: comparisons,
+      errors: feedErrors,
+      warning: "Screenshot prices are visual reads; live prices come only from the stated candle feed.",
+    };
+    finishStage(marketVerification);
+
+    startStage("ict_evaluation", { entry_timeframe: tfPrimary, minimum_score: Number(env.ICT_MIN_SCORE) || 60 });
+    let marketScan: IctScanResult | null = null;
+    let scanError: string | null = null;
+    if (!isIctTimeframe(tfPrimary) || !feeds[tfPrimary]) {
+      scanError = feedErrors[tfPrimary] || "Entry timeframe is unsupported or unavailable from the configured market-data providers.";
+    } else if (feeds[tfPrimary].bars.length < 60) {
+      scanError = `Not enough completed ${tfPrimary} candles for a validated ICT scan.`;
+    } else {
+      try {
+        marketScan = scanIct(
+          Object.fromEntries(Object.entries(feeds).map(([frame, feed]) => [frame, feed.bars])),
+          tfPrimary, symbol,
+        );
+      } catch (error) {
+        scanError = error instanceof Error ? error.message.slice(0, 260) : String(error).slice(0, 260);
+      }
+    }
+    finishStage({
+      status: marketScan ? "scanned" : "unavailable",
+      candidate_count: marketScan?.setups.length || 0,
+      selected_setup: marketScan?.selected || null,
+      direction: marketScan?.direction || "WAIT",
+      error: scanError,
+      source: "completed market-feed candles; deterministic ICT engine",
+    });
+
+    startStage("final_report", { annotation_source: "visual evidence only", trade_levels_source: "validated market candles only" });
     const analysis = buildTradeRead(aiResults.providerResults, aiResults.providerErrors, tfPrimary, tfSecondary, env, symbol);
+    const candidate = marketScan?.setups.find(setup => setup.id === marketScan.selected && setup.timeframe === tfPrimary) || null;
+    const feedQualityOk = [tfPrimary, tfSecondary].every(timeframe =>
+      feeds[timeframe] && !feeds[timeframe].is_stale && !feeds[timeframe].market_closed
+      && feeds[timeframe].data_quality_status === "GOOD");
+    const normalizationOk = savedImages.every(image => image.preparation?.mode === "browser_canvas");
+    const quoteMismatch = comparisons.some(item => item.status === "mismatch");
+    const detectedOtherSymbol = aiResults.providerResults.some(item =>
+      Array.isArray(item.chart_reads) && item.chart_reads.some((value) => {
+        const read = value && typeof value === "object" ? value as JsonRecord : {};
+        return typeof read.symbol_detected === "string" && !["", "unknown", symbol].includes(read.symbol_detected)
+          && !matchesSymbol(read.symbol_detected, symbol);
+      }));
+    const tradeReady = Boolean(candidate && feedQualityOk && normalizationOk && !quoteMismatch && !detectedOtherSymbol);
+    const plan = tradeReady ? candidate?.plan : null;
+    const direction = tradeReady ? candidate?.action || "WAIT" : "WAIT";
+    analysis.symbol = symbol;
+    analysis.mode = marketVerification.available ? "LIVE_MARKET_VERIFIED" : "IMAGE_ONLY";
+    analysis.direction = direction;
+    analysis.model_bias = direction;
+    analysis.trade_ready = tradeReady;
+    analysis.forced_signal = false;
+    analysis.force_signal_used = false;
+    analysis.levels_available = Boolean(plan);
+    analysis.signal_status = tradeReady ? "ICT_SETUP_VALIDATED" : "WAIT_FOR_CONFIRMATION";
+    analysis.entry_price = plan?.entry ?? null;
+    analysis.entry_low = plan?.entry_low ?? null;
+    analysis.entry_high = plan?.entry_high ?? null;
+    analysis.stop_loss = plan?.stop ?? null;
+    analysis.take_profit_1 = plan?.tp1 ?? null;
+    analysis.take_profit_2 = plan?.tp2 ?? null;
+    analysis.atr_method = "No ATR-derived plan. Entry, structural invalidation and liquidity targets come from a validated ICT setup on completed market candles.";
+    analysis.price_source = plan ? "Live candle feed" : "Screenshot values are not live quotes.";
+    analysis.market_verification = marketVerification;
+    analysis.market_ict_scan = {
+      candidate_count: marketScan?.setups.length || 0,
+      selected_setup: candidate,
+      error: scanError,
+      trade_blockers: [
+        ...(!feedQualityOk ? ["market feed is stale, closed, missing, or degraded"] : []),
+        ...(!normalizationOk ? ["images were not prepared by the shared browser normalizer"] : []),
+        ...(quoteMismatch ? ["screenshot quote does not match the live candle"] : []),
+        ...(detectedOtherSymbol ? ["image symbol conflicts with the user-selected symbol"] : []),
+        ...(!candidate ? ["no valid ICT setup on the selected entry timeframe"] : []),
+      ],
+    };
+    analysis.chart_reconstruction = reconstruction;
+    analysis.live_feeds = comparisons;
+    analysis.force_settings = {
+      live_terminal_force_signal: env.FORCE_SIGNAL?.trim().toLowerCase() !== "false",
+      image_force_signal: env.IMAGE_FORCE_SIGNAL?.trim().toLowerCase() === "true",
+    };
+    if (plan && candidate) {
+      analysis.confidence = candidate.score;
+      analysis.setup_rationale = `Validated market-candle ICT setup: ${candidate.reasons.join("; ")}`;
+      for (const read of analysis.chart_reads as JsonRecord[]) {
+        const scale = read.price_scale && typeof read.price_scale === "object" ? read.price_scale as JsonRecord : {};
+        if (scale.verified !== true || typeof scale.bottom !== "number" || typeof scale.top !== "number") continue;
+        for (const [label, value] of [["ENTRY", plan.entry], ["SL", plan.stop], ["TP1", plan.tp1], ["TP2", plan.tp2]] as const) {
+          if (value >= scale.bottom && value <= scale.top) {
+            const annotations = Array.isArray(read.annotations) ? read.annotations as JsonRecord[] : [];
+            annotations.push({ type: "price_line", price: value, label: `${label} ${value.toFixed(2)}` });
+            read.annotations = annotations;
+          }
+        }
+      }
+    } else {
+      analysis.risk_notes = [...new Set([
+        ...(Array.isArray(analysis.risk_notes) ? analysis.risk_notes : []),
+        "No actionable trade levels were issued. Review the pipeline stage outputs and trade blockers.",
+      ])];
+    }
+    analysis.pipeline_stages = stages;
     analysis.provider_errors = aiResults.providerErrors;
     const createdAt = new Date().toISOString();
     const values = [
@@ -245,11 +552,24 @@ async function analyze(request: Request, env: Env): Promise<Response> {
         RETURNING id
       `;
       const id = finiteNumber(inserted[0]?.id);
-      return json({
+      finishStage({ decision: direction, trade_ready: tradeReady, history_saved: id !== null });
+      analysis.pipeline_stages = stages;
+      if (id !== null) {
+        await sql`UPDATE analysis_records SET payload_json = ${JSON.stringify(analysis)} WHERE id = ${id}`;
+      }
+      const finalResponse = {
         id,
         created_at: createdAt,
+        symbol,
         tf_primary: tfPrimary,
         tf_secondary: tfSecondary,
+        direction: analysis.direction,
+        confidence: analysis.confidence,
+        entry_low: analysis.entry_low,
+        entry_high: analysis.entry_high,
+        stop_loss: analysis.stop_loss,
+        take_profit_1: analysis.take_profit_1,
+        take_profit_2: analysis.take_profit_2,
         image_primary: savedImages[0].key,
         image_secondary: savedImages[1].key,
         image_primary_url: uploadUrl(savedImages[0].key),
@@ -257,14 +577,28 @@ async function analyze(request: Request, env: Env): Promise<Response> {
         history_saved: id !== null,
         ...(id === null ? { history_error: "Database did not return the inserted record ID." } : {}),
         analysis,
+      };
+      sendProgress?.({ type: "complete", data: finalResponse });
+      return json({
+        ...finalResponse,
       });
     } catch (error) {
       logDatabaseError("analysis_history_save_failed", error);
-      return json({
+      finishStage({ decision: direction, trade_ready: tradeReady, history_saved: false, error: "Analysis history could not be saved." });
+      analysis.pipeline_stages = stages;
+      const finalResponse = {
         id: null,
         created_at: createdAt,
+        symbol,
         tf_primary: tfPrimary,
         tf_secondary: tfSecondary,
+        direction: analysis.direction,
+        confidence: analysis.confidence,
+        entry_low: analysis.entry_low,
+        entry_high: analysis.entry_high,
+        stop_loss: analysis.stop_loss,
+        take_profit_1: analysis.take_profit_1,
+        take_profit_2: analysis.take_profit_2,
         image_primary: savedImages[0].key,
         image_secondary: savedImages[1].key,
         image_primary_url: uploadUrl(savedImages[0].key),
@@ -272,15 +606,54 @@ async function analyze(request: Request, env: Env): Promise<Response> {
         history_saved: false,
         history_error: "Analysis completed, but saving it to the database failed.",
         analysis,
+      };
+      sendProgress?.({ type: "complete", data: finalResponse });
+      return json({
+        ...finalResponse,
       });
     }
   } catch (error) {
+    failStage(error);
     await deleteUploadedImages(env.UPLOADS, savedImages);
     if (!(error instanceof ApiError) && error instanceof Error && !error.message.startsWith("Gemini API") && !error.message.startsWith("DeepSeek")) {
       console.error(JSON.stringify({ event: "analysis_failed", message: error.message }));
     }
     throw error;
   }
+}
+
+function analyzeStream(request: Request, env: Env): Response {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: JsonRecord) => {
+        if (!cancelled) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+      return analyze(request, env, send).then(() => {
+        if (!cancelled) controller.close();
+      }).catch((error: unknown) => {
+        if (!cancelled) {
+          send({
+            type: "error",
+            status: error instanceof ApiError ? error.status : 500,
+            detail: error instanceof Error ? error.message.slice(0, 350) : "Image analysis failed.",
+          });
+          controller.close();
+        }
+      });
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 async function history(env: Env, url: URL): Promise<Response> {
@@ -453,11 +826,18 @@ function ictSymbol(value: string | null): string {
   badRequest("Unsupported symbol. Use XAUUSD or BTCUSD.");
 }
 
+function isIctTimeframe(value: string): value is IctTimeframe {
+  return ["M1", "M5", "M15", "H1", "H4", "D1", "W1"].includes(value);
+}
+
 function feedMetadata(feed: Awaited<ReturnType<typeof fetchMarketCandles>>): JsonRecord {
   return {
     symbol: feed.symbol, tf: feed.tf, source: feed.source, last_bar_time: feed.last_bar_time,
     age_seconds: feed.age_seconds, fetched_at: feed.fetched_at, market_closed: feed.market_closed,
     is_stale: feed.is_stale, fallback_reason: feed.fallback_reason, price: feed.price,
+    missing_candle_count: feed.missing_candle_count, historical_coverage: feed.historical_coverage,
+    aggregation_source: feed.aggregation_source, data_quality_status: feed.data_quality_status,
+    duplicate_candle_count: feed.duplicate_candle_count, out_of_order_candle_count: feed.out_of_order_candle_count,
   };
 }
 
@@ -465,7 +845,9 @@ async function ictCandles(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const tf = (url.searchParams.get("tf") || "M5").toUpperCase();
   const symbol = ictSymbol(url.searchParams.get("symbol"));
-  if (!["M1", "M5", "M15", "H1"].includes(tf)) badRequest("Unsupported timeframe. Use M1, M5, M15 or H1.");
+  if (!isIctTimeframe(tf)) {
+    badRequest("Unsupported timeframe. Use M1, M5, M15, H1, H4, D1 or W1.");
+  }
   try {
     const feed = await fetchMarketCandles(symbol, tf, env);
     return json({ feed: feedMetadata(feed), bars: feed.bars.slice(-300) });
@@ -478,26 +860,112 @@ function grade(score: number): string {
   return score >= 80 ? "A" : score >= 65 ? "B" : score >= 50 ? "C" : "D";
 }
 
+function attachSetupHistory(analysis: JsonRecord, previous: JsonRecord | null): void {
+  const history = Array.isArray(previous?.setup_lifecycle_history)
+    ? [...previous.setup_lifecycle_history] as JsonRecord[]
+    : [];
+  const lastState = new Map<string, string>();
+  for (const event of history) {
+    if (typeof event.setup_id === "string" && typeof event.lifecycle === "string") {
+      lastState.set(event.setup_id, event.lifecycle);
+    }
+  }
+  const setups = Array.isArray(analysis.setups) ? analysis.setups as JsonRecord[] : [];
+  const currentIds = new Set<string>();
+  const timestamp = Number(analysis.time_ms) || Date.now();
+  for (const setup of setups) {
+    if (typeof setup.id !== "string" || typeof setup.lifecycle !== "string") continue;
+    currentIds.add(setup.id);
+    if (lastState.get(setup.id) !== setup.lifecycle) {
+      history.push({ setup_id: setup.id, opportunity_id: setup.opportunity_id,
+        lifecycle: setup.lifecycle, observed_at_ms: timestamp });
+      lastState.set(setup.id, setup.lifecycle);
+    }
+  }
+
+  const priorSetups = Array.isArray(previous?.setups) ? previous.setups as JsonRecord[] : [];
+  const price = Number(analysis.price);
+  for (const setup of priorSetups) {
+    if (typeof setup.id !== "string" || currentIds.has(setup.id) || typeof setup.lifecycle !== "string"
+      || ["TARGET_REACHED", "INVALIDATED", "EXPIRED"].includes(setup.lifecycle)) continue;
+    const plan = setup.plan && typeof setup.plan === "object" ? setup.plan as JsonRecord : {};
+    const direction = setup.direction;
+    let state = setup.lifecycle;
+    if (timestamp >= (Number(plan.valid_until_ms) || Number.POSITIVE_INFINITY)) state = "EXPIRED";
+    else if (direction === "bull" && typeof plan.stop === "number" && price <= plan.stop) state = "INVALIDATED";
+    else if (direction === "bear" && typeof plan.stop === "number" && price >= plan.stop) state = "INVALIDATED";
+    else if (direction === "bull" && typeof plan.tp1 === "number" && price >= plan.tp1) state = "TARGET_REACHED";
+    else if (direction === "bear" && typeof plan.tp1 === "number" && price <= plan.tp1) state = "TARGET_REACHED";
+    if (state !== lastState.get(setup.id)) {
+      history.push({ setup_id: setup.id, opportunity_id: setup.opportunity_id,
+        lifecycle: state, observed_at_ms: timestamp });
+      lastState.set(setup.id, state);
+    }
+  }
+
+  const retained = history.slice(-2000);
+  analysis.setup_lifecycle_history = retained;
+  for (const setup of setups) {
+    if (typeof setup.id === "string") {
+      setup.lifecycle_history = retained.filter(event => event.setup_id === setup.id).slice(-50);
+    }
+  }
+}
+
 async function ictScan(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const timeframe = (url.searchParams.get("tf") || "M5").toUpperCase();
   const symbol = ictSymbol(url.searchParams.get("symbol"));
-  if (timeframe !== "M1" && timeframe !== "M5" && timeframe !== "M15") {
-    badRequest("Entry timeframe must be M1, M5 or M15.");
+  if (!isIctTimeframe(timeframe)) {
+    badRequest("Unsupported entry timeframe. Use M1, M5, M15, H1, H4, D1 or W1.");
   }
   const tf: IctTimeframe = timeframe;
   const useAi = (url.searchParams.get("ai") || "true").toLowerCase() !== "false";
+  const directionFilter = url.searchParams.get("direction");
+  const modelFilter = url.searchParams.get("model");
+  const timeframeFilter = url.searchParams.get("timeframe");
+  const statusFilter = url.searchParams.get("status");
+  const minimumScoreFilter = url.searchParams.get("min_score");
   const minScore = env.ICT_MIN_SCORE === undefined ? 60 : Number(env.ICT_MIN_SCORE);
   if (!Number.isInteger(minScore) || minScore < 0 || minScore > 100) {
     throw new ApiError(500, "ICT_MIN_SCORE Worker variable must be an integer from 0 to 100.");
   }
+  if (directionFilter && !["BUY", "SELL", "WAIT"].includes(directionFilter.toUpperCase())) {
+    badRequest("direction filter must be BUY, SELL or WAIT.");
+  }
+  const knownModels = spec.scanner.models.map((entry) => entry.id);
+  if (modelFilter && !knownModels.includes(modelFilter.toUpperCase() as typeof knownModels[number])) {
+    badRequest("Unknown ICT model filter.");
+  }
+  if (timeframeFilter && !isIctTimeframe(timeframeFilter.toUpperCase())) badRequest("Unknown ICT timeframe filter.");
+  const lifecycleStates = ["DETECTED", "FORMING", "WAITING_FOR_CONFIRMATION", "CONFIRMED", "WAITING_FOR_RETRACE",
+    "ENTRY_READY", "ACTIVE", "TARGET_REACHED", "INVALIDATED", "EXPIRED"];
+  if (statusFilter && !lifecycleStates.includes(statusFilter.toUpperCase())) badRequest("Unknown setup lifecycle status filter.");
+  const parsedMinimumScore = minimumScoreFilter === null ? undefined : Number(minimumScoreFilter);
+  if (parsedMinimumScore !== undefined && (!Number.isFinite(parsedMinimumScore) || parsedMinimumScore < 0 || parsedMinimumScore > 100)) {
+    badRequest("min_score must be from 0 to 100.");
+  }
   let feeds: Record<string, Awaited<ReturnType<typeof fetchMarketCandles>>>;
+  const dataWarnings: string[] = [];
   let engineResult: IctScanResult;
   try {
-    const timeframes = [...new Set(["H1", "M15", tf])];
-    const fetched = await Promise.all(timeframes.map((frame) => fetchMarketCandles(symbol, frame, env)));
-    feeds = Object.fromEntries(timeframes.map((frame, index) => [frame, fetched[index]]));
-    engineResult = scanIct(Object.fromEntries(timeframes.map((frame) => [frame, feeds[frame].bars])), tf, symbol, { minScore });
+    const timeframes = [...new Set(spec.scanner.coverage_timeframes as IctTimeframe[])];
+    const settled = await Promise.allSettled(timeframes.map((frame) => fetchMarketCandles(symbol, frame, env)));
+    feeds = {};
+    for (const [index, result] of settled.entries()) {
+      const frame = timeframes[index];
+      if (result.status === "fulfilled") feeds[frame] = result.value;
+      else if (frame === tf) throw result.reason;
+      else dataWarnings.push(`${frame} timeframe unavailable: ${result.reason instanceof Error ? result.reason.message.slice(0, 160) : String(result.reason).slice(0, 160)}`);
+    }
+    const filters = Object.fromEntries(Object.entries({
+      direction: directionFilter || undefined,
+      model: modelFilter || undefined,
+      timeframe: timeframeFilter || undefined,
+      status: statusFilter || undefined,
+      min_score: parsedMinimumScore,
+    }).filter(([, value]) => value !== undefined));
+    engineResult = scanIct(Object.fromEntries(Object.entries(feeds).map(([frame, feed]) => [frame, feed.bars])), tf, symbol, { minScore, filters });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Unsupported")) badRequest(error.message);
     throw new ApiError(503, `ICT scan failed: ${error instanceof Error ? error.message.slice(0, 350) : String(error).slice(0, 350)}`);
@@ -517,6 +985,7 @@ async function ictScan(request: Request, env: Env): Promise<Response> {
   const analysis: JsonRecord = {
     ...engineResult,
     ...verdict,
+    data_warnings: dataWarnings,
     engine_direction: engineResult.direction,
     feed: feedMetadata(ltfFeed),
     ai_review: review,
@@ -539,6 +1008,13 @@ async function ictScan(request: Request, env: Env): Promise<Response> {
   let historyError: string | null = null;
   try {
     const sql = createSql(env);
+    const previousRecord = await firstRow(sql`
+      SELECT payload_json FROM analysis_records
+      WHERE symbol = ${symbol} AND tf_secondary = ${"ICT"}
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+    attachSetupHistory(analysis, previousRecord ? safeJson(previousRecord.payload_json) : null);
     const inserted = await sql`
       INSERT INTO analysis_records
         (created_at, symbol, tf_primary, tf_secondary, direction, confidence, entry_low, entry_high,
@@ -744,9 +1220,11 @@ async function dispatch(request: Request, env: Env): Promise<Response> {
     return uploadedImage(env, pathname);
   }
   if (pathname === "/api/health" && request.method === "GET") return getHealth(env);
+  if (pathname === "/api/image-analysis-spec" && request.method === "GET") return json(imageAnalysisSpec);
   if (pathname === "/api/live-market" && request.method === "GET") return liveMarket(request, env);
   if (pathname === "/api/live-analyze" && request.method === "POST") return liveAnalyze(request, env);
   if (pathname === "/api/live-chat" && request.method === "POST") return liveChat(request, env);
+  if (pathname === "/api/analyze/stream" && request.method === "POST") return analyzeStream(request, env);
   if (pathname === "/api/analyze" && request.method === "POST") return analyze(request, env);
   if (pathname === "/api/history" && request.method === "GET") return history(env, new URL(request.url));
   if (pathname === "/api/stats" && request.method === "GET") return stats(env);

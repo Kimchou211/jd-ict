@@ -1,6 +1,6 @@
 from math import sqrt, isfinite
 from typing import Any
-from .config import CONFIDENCE_MINIMUM, PRICE_AGREEMENT_ABSOLUTE, ATR_AGREEMENT_PERCENT, FORCE_SIGNAL
+from .config import CONFIDENCE_MINIMUM, PRICE_AGREEMENT_ABSOLUTE, ATR_AGREEMENT_PERCENT, IMAGE_FORCE_SIGNAL
 from . import symbols
 
 ANN_LAYERS = {"liquidity", "structure", "zones", "range", "plan"}
@@ -31,6 +31,22 @@ def _read_at(result: dict, index: int) -> dict:
     if not isinstance(reads, list) or len(reads) <= index or not isinstance(reads[index], dict):
         return {}
     return reads[index]
+
+
+def _visual_observations(results: list[dict], index: int) -> list[dict]:
+    fields = (
+        "symbol_header_visible", "timeframe_label_visible", "chart_area_visibility",
+        "price_axis_visibility", "indicator_panel_visibility", "glare", "rotated",
+        "cropped", "blur_risk",
+    )
+    observations = []
+    for result in results:
+        read = _read_at(result, index)
+        observations.append({
+            "provider": str(result.get("provider", "Unknown"))[:40],
+            **{field: read.get(field) for field in fields},
+        })
+    return observations
 
 
 def _provider_value(results: list[dict], i: int, key: str, readable_key: str | None = None) -> tuple[float | None, bool]:
@@ -171,7 +187,8 @@ def build_strict_read(provider_results: list[dict], provider_errors: dict, tf_pr
     provider_count = len(provider_results)
     out = {
         "symbol": symbols.profile()["name"], "mode": "IMAGE_ONLY", "direction": "WAIT", "model_bias": model_bias,
-        "trade_ready": False, "levels_available": False, "signal_status": "WAIT_FOR_CONFIRMATION",
+        "trade_ready": False, "levels_available": False, "forced_signal": False, "force_signal_used": False,
+        "signal_status": "WAIT_FOR_CONFIRMATION",
         "confidence": confidence, "entry_price": None, "entry_low": None, "entry_high": None,
         "stop_loss": None, "take_profit_1": None, "take_profit_2": None,
         "atr_primary": None, "atr_secondary": None, "effective_atr": None,
@@ -252,6 +269,7 @@ def build_strict_read(provider_results: list[dict], provider_errors: dict, tf_pr
             "price_scale": {"top": round(top, 2) if scale_ok else None, "bottom": round(bottom, 2) if scale_ok else None, "verified": bool(scale_ok)},
             "key_levels": key_levels,
             "annotations": _sanitize_annotations(raw_read),
+            "visual_observations": _visual_observations(provider_results, i),
             "providers": [{"name": r.get("provider", "Unknown"), "current_price": num(_read_at(r, i).get("current_price")),
                 "atr_value": num(_read_at(r, i).get("atr_value")), "price_readable": _read_at(r, i).get("current_price_readable") is True,
                 "atr_visible": _read_at(r, i).get("atr_visible") is True} for r in provider_results]
@@ -380,7 +398,7 @@ def _build_summary(out: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# FORCED-SIGNAL MODE (FORCE_SIGNAL=true in .env)
+# Optional legacy image-direction mode (IMAGE_FORCE_SIGNAL=true in .env).
 # Always returns BUY or SELL when the AI gave any usable direction, and replaces
 # the old WAIT gates with a quality GRADE (A best ... D weakest) so you can see
 # how much of the signal was read from the chart and how much was estimated.
@@ -393,7 +411,7 @@ _DROP_NOTE_PREFIXES = ("No single directional edge", "Directional bias exists, b
 def build_trade_read(provider_results: list[dict], provider_errors: dict, tf_primary: str, tf_secondary: str, symbol: str = "XAUUSD") -> dict:
     symbols.set_active(symbol)
     out = build_strict_read(provider_results, provider_errors, tf_primary, tf_secondary)
-    if not FORCE_SIGNAL:
+    if not IMAGE_FORCE_SIGNAL:
         return out
     return _apply_forced_signal(out, provider_results, tf_primary, tf_secondary)
 

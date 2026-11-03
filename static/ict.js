@@ -171,6 +171,29 @@
     $$('ictSource').textContent = `${f.source} · last candle ${new Date(f.last_bar_time).toLocaleString()}` + (f.fallback_reason ? ` · fallback: ${f.fallback_reason}` : '');
   }
 
+  function renderSetups() {
+    const a = S.analysis;
+    if (!a) return;
+    const direction = $$('ictSetupDirection').value, model = $$('ictSetupModel').value;
+    const timeframe = $$('ictSetupTimeframe').value, status = $$('ictSetupStatus').value;
+    const minimumScore = Number($$('ictSetupMinScore').value || 0);
+    const setups = (a.setups || []).filter((setup) =>
+      (!direction || setup.action === direction)
+      && (!model || setup.model_id === model)
+      && (!timeframe || setup.timeframe === timeframe)
+      && (!status || setup.lifecycle === status)
+      && setup.score >= minimumScore);
+    $$('ictSetups').innerHTML = setups.map((setup) => `<div class="metric">
+      <label>#${setup.rank || '—'} · ${esc(setup.model_name || setup.model_id)} · ${esc(setup.timeframe)} · ${esc(setup.lifecycle || setup.status.replace(/_/g, ' '))}</label>
+      <strong>${setup.score}/100 · ${esc(setup.action)}</strong>
+      <small>${esc((setup.arrays || []).join(' + '))} · RR ${setup.plan?.rr1 ?? '—'} / ${setup.plan?.rr2 ?? '—'} · ${esc(setup.sweep?.kind || '')}</small>
+      <small>Entry ${px(setup.plan?.entry_low)}–${px(setup.plan?.entry_high)} · SL ${px(setup.plan?.stop)} · TP ${px(setup.plan?.tp1)}</small>
+    </div>`).join('') || `<div class="tiny">${a.scanner_status === 'NO_VALID_SETUP' ? 'NO_VALID_SETUP · no enabled detector confirmed a candidate.' : 'No candidates match these filters.'}</div>`;
+    const coverage = Object.entries(a.coverage || {}).map(([tf, item]) => `${tf}: ${item.status}`).join(' · ');
+    const unavailable = (a.model_registry || []).filter((entry) => !entry.available).length;
+    $$('ictScannerMeta').textContent = `${a.model_classification_count || 0} model classifications · ${a.unique_opportunity_count || 0} distinct opportunities · ${unavailable} models unavailable · ${coverage}`;
+  }
+
   async function analyze() {
     if (S.busy) return; S.busy = true; const btn = $$('ictAnalyzeBtn'); btn.disabled = true; $$('ictProgress').classList.add('show');
     try {
@@ -199,7 +222,11 @@
       [`${a.ltf} structure`, tr(st[a.ltf]?.trend)], ['Dealing range', `${esc(a.pd?.zone || '—')} (${a.pd?.pct ?? '—'}%)`], ['CRT (H1)', esc((a.crt?.state || '—').replace(/_/g, ' '))],
       ['Session', `${esc((a.session?.name || '').replace(/_/g, ' '))}${a.session?.in_killzone ? ' · kill zone' : ''}`], ['ATR 14', px(a.atr, 3)]].map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('');
     $$('ictReasons').innerHTML = (a.reasons || []).map((r) => `<li>${esc(r)}</li>`).join('') || '<li>No reasons.</li>';
-    $$('ictSetups').innerHTML = (a.setups || []).map((s) => `<div class="metric"><label>${esc(s.id)} · ${esc(s.action)} · ${esc(s.status.replace(/_/g, ' '))}</label><strong>${s.score}/100</strong><small>${esc(s.arrays.join(' + '))} · RR ${s.plan.rr1} · sweep ${esc(s.sweep.kind)}</small></div>`).join('') || '<div class="tiny">No sweep → MSS sequence found in the lookback window.</div>';
+    const modelSelect = $$('ictSetupModel'), previousModel = modelSelect.value;
+    modelSelect.innerHTML = '<option value="">All models</option>' + (a.model_registry || []).map((entry) =>
+      `<option value="${esc(entry.id)}">${esc(entry.name)} · ${esc(entry.status)}</option>`).join('');
+    if ([...modelSelect.options].some((option) => option.value === previousModel)) modelSelect.value = previousModel;
+    renderSetups();
     const r = a.ai_review, vv = a.ai_validation;
     let html;
     if (!r) html = '<div class="tiny">AI mentor was switched off for this scan.</div>';
@@ -218,6 +245,8 @@
     $$('ictTf').addEventListener('change', async (e) => { S.tf = e.target.value; S.bars = []; S.analysis = null; S.drawings = []; S.end = null; draw(); await loadCandles(); });
     $$('ictRefreshBtn').addEventListener('click', () => loadCandles());
     $$('ictAnalyzeBtn').addEventListener('click', analyze);
+    ['ictSetupDirection', 'ictSetupModel', 'ictSetupTimeframe', 'ictSetupStatus', 'ictSetupMinScore']
+      .forEach((id) => $$(id).addEventListener('input', renderSetups));
     $$('ictPills').querySelectorAll('[data-layer]').forEach((b) => b.addEventListener('click', () => { const l = b.dataset.layer; S.layers[l] = !S.layers[l]; b.classList.toggle('on', S.layers[l]); draw(); }));
     $$('ictPills').querySelector('[data-ai]').addEventListener('click', (e) => {
       if (e.target.dataset.clear != null) { S.drawings = []; $$('ictPills').querySelector('[data-ai]').firstElementChild.textContent = 'AI · 0 drawings'; draw(); return; }

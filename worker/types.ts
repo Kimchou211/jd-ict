@@ -22,6 +22,7 @@ export interface Env {
   PRICE_AGREEMENT_ABSOLUTE?: string;
   ATR_AGREEMENT_PERCENT?: string;
   FORCE_SIGNAL?: string;
+  IMAGE_FORCE_SIGNAL?: string;
 }
 
 export type JsonRecord = Record<string, unknown>;
@@ -48,4 +49,5 @@ export interface ChartImage {
   mimeType: string;
   base64: string;
   key: string;
+  preparation?: JsonRecord;
 }
