@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "kimchou-ict",
+  "name": "jd-ict",
   "account_id": "77fa8828b4edb71086e716e10532ae55",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-12",
