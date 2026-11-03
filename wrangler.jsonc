@@ -35,7 +35,13 @@
     "ICT_AI_LANGUAGE": "Khmer",
     "NEWS_BLACKOUT_BEFORE_MIN": "30",
     "NEWS_BLACKOUT_AFTER_MIN": "30",
-    "NEWS_CACHE_SECONDS": "900"
+    "NEWS_CACHE_SECONDS": "900",
+    "APP_USER": "jd",
+    "AUTO_TRACK": "true",
+    "AUTO_TRACK_SECONDS": "90",
+    "ICT_ASIA_UTC": "0-7",
+    "ICT_LONDON_KZ_UTC": "7-10",
+    "ICT_NY_KZ_UTC": "12-15"
   },
   "secrets": {
     "required": [
