@@ -75,6 +75,25 @@ QUALITATIVE = {"FED_SPEECH", "FOMC_STATEMENT", "FOMC_PRESS", "FOMC_MINUTES"}
 _cache: dict[str, Any] = {"ts": 0.0, "events": [], "source": None, "error": None}
 
 
+def classify_provider_failure(status_code: int | None, text: str = "", retry_after_ms: int | None = None) -> dict[str, Any]:
+    msg = str(text or "").strip()
+    if status_code == 401:
+        return {"status": "INVALID_CREDENTIALS", "retryable": False, "message": "Finnhub credentials invalid or expired", "retry_after_ms": retry_after_ms}
+    if status_code == 403:
+        return {"status": "PLAN_RESTRICTED", "retryable": False, "message": msg or "Provider access restricted", "retry_after_ms": retry_after_ms}
+    if status_code == 429:
+        return {"status": "RATE_LIMITED", "retryable": True, "message": msg or "Rate limit reached", "retry_after_ms": retry_after_ms or 1000}
+    if status_code is not None and status_code >= 500:
+        return {"status": "TRANSIENT_ERROR", "retryable": True, "message": msg or f"HTTP {status_code}", "retry_after_ms": retry_after_ms or 1000}
+    if status_code is not None and status_code >= 400:
+        return {"status": "UNAVAILABLE", "retryable": False, "message": msg or f"HTTP {status_code}", "retry_after_ms": retry_after_ms}
+    if "forbidden" in msg.lower() or "subscription" in msg.lower() or "entitlement" in msg.lower():
+        return {"status": "PLAN_RESTRICTED", "retryable": False, "message": msg or "Provider access restricted", "retry_after_ms": retry_after_ms}
+    if not msg:
+        return {"status": "DATA_UNAVAILABLE", "retryable": True, "message": "No market data available", "retry_after_ms": 1000}
+    return {"status": "UNAVAILABLE", "retryable": True, "message": msg, "retry_after_ms": retry_after_ms or 1000}
+
+
 def classify(title: str) -> tuple[str | None, str | None]:
     t = (title or "").lower()
     for cat, pattern, label in CATEGORY_RULES:
@@ -175,25 +194,30 @@ async def load_events(force: bool = False) -> dict:
     """Cached calendar. Keeps serving the last good copy if the provider fails (stale=True)."""
     now = time.time()
     if not force and _cache["events"] and now - _cache["ts"] < CACHE_SECONDS:
-        return {"events": _cache["events"], "source": _cache["source"], "stale": False, "error": None, "fetched_at": _cache["ts"]}
-    events, source, errors = [], None, []
+        return {"events": _cache["events"], "source": _cache["source"], "stale": False, "error": None, "fetched_at": _cache["ts"], "provider_status": "OK"}
+    events, source, errors, provider_status = [], None, [], None
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=8.0)) as client:
         if FINNHUB_API_KEY:
             try:
                 events, source = await _fetch_finnhub(client), "Finnhub"
+                provider_status = "OK"
             except Exception as exc:  # noqa: BLE001
+                details = classify_provider_failure(401 if "401" in str(exc) else 403 if "403" in str(exc) else 429 if "429" in str(exc) else 500 if str(exc).startswith("Finnhub 5") else None, str(exc)[:200])
+                provider_status = details["status"]
                 errors.append(str(exc)[:120])
         if not events:
             try:
                 events, source = await _fetch_ff(client), "Forex Factory"
+                provider_status = provider_status or "OK"
             except Exception as exc:  # noqa: BLE001
                 errors.append(str(exc)[:120])
     events = sorted((e for e in events if _relevant(e)), key=lambda e: e["ts_ms"])
     if events:
         _cache.update(ts=now, events=events, source=source, error=None)
-        return {"events": events, "source": source, "stale": False, "error": None, "fetched_at": now}
+        return {"events": events, "source": source, "stale": False, "error": None, "fetched_at": now, "provider_status": provider_status or "OK"}
     _cache["error"] = "; ".join(errors) or "no events"
-    return {"events": _cache["events"], "source": _cache["source"], "stale": True, "error": _cache["error"], "fetched_at": _cache["ts"] or None}
+    stale = bool(_cache["events"])
+    return {"events": _cache["events"] if stale else [], "source": _cache["source"] if stale else None, "stale": stale, "error": _cache["error"], "fetched_at": _cache["ts"] or None, "provider_status": provider_status or "DATA_UNAVAILABLE"}
 
 
 # --- tier 2: rule-based reading -------------------------------------------------------------------

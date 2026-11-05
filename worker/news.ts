@@ -41,6 +41,8 @@ const RULES: Record<string, { pol: 1 | -1; tol: [number, number] }> = {
 
 let cache: { ts: number; events: NewsEvent[]; source: string | null; error: string | null } = { ts: 0, events: [], source: null, error: null };
 
+export type ProviderStatus = "OK" | "INVALID_CREDENTIALS" | "PLAN_RESTRICTED" | "RATE_LIMITED" | "TRANSIENT_ERROR" | "UNAVAILABLE" | "DATA_UNAVAILABLE";
+
 export function classify(title: string): [string | null, string | null] {
   const t = (title || "").toLowerCase();
   for (const [cat, re, label] of CATEGORY_RULES) if (re.test(t)) return [cat, label];
@@ -55,6 +57,33 @@ export function parseValue(raw: unknown): number | null {
   if (!m) return null;
   const mult: Record<string, number> = { "": 1, k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
   return Number(m[1]) * mult[m[2].toLowerCase()];
+}
+
+export function classifyProviderFailure(statusCode: number | null | undefined, text = "", retryAfterMs?: number): { status: ProviderStatus; retryable: boolean; message: string; retryAfterMs?: number } {
+  const msg = String(text || "").trim();
+  if (statusCode === 401) return { status: "INVALID_CREDENTIALS", retryable: false, message: "Finnhub credentials invalid or expired", retryAfterMs };
+  if (statusCode === 403) return { status: /plan|subscription|entitlement|upgrade/i.test(msg) ? "PLAN_RESTRICTED" : "PLAN_RESTRICTED", retryable: false, message: msg || "Provider access restricted", retryAfterMs };
+  if (statusCode === 429) return { status: "RATE_LIMITED", retryable: true, message: msg || "Rate limit reached", retryAfterMs: retryAfterMs ?? 1000 };
+  if (statusCode && statusCode >= 500) return { status: "TRANSIENT_ERROR", retryable: true, message: msg || `HTTP ${statusCode}`, retryAfterMs: retryAfterMs ?? 1000 };
+  if (statusCode && statusCode >= 400) return { status: "UNAVAILABLE", retryable: false, message: msg || `HTTP ${statusCode}`, retryAfterMs };
+  if (msg.toLowerCase().includes("forbidden") || msg.toLowerCase().includes("subscription")) return { status: "PLAN_RESTRICTED", retryable: false, message: msg || "Provider access restricted", retryAfterMs };
+  if (!msg) return { status: "DATA_UNAVAILABLE", retryable: true, message: "No market data available", retryAfterMs: 1000 };
+  return { status: "UNAVAILABLE", retryable: true, message: msg, retryAfterMs: retryAfterMs ?? 1000 };
+}
+
+function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+async function fetchWithRetry(url: string, init?: RequestInit, retries = 2): Promise<Response> {
+  let last: Response | undefined;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, init);
+    if (res.ok || res.status < 500 && res.status !== 429) return res;
+    last = res;
+    const retryAfter = res.headers.get("Retry-After");
+    const ms = retryAfter ? Number(retryAfter) * 1000 : Math.min(1000 * 2 ** attempt, 8000);
+    if (attempt < retries) await sleep(ms);
+  }
+  return last ?? new Response(null, { status: 500 });
 }
 
 async function sha1Short(text: string): Promise<string> {
@@ -80,8 +109,12 @@ async function fetchFinnhub(env: Env): Promise<NewsEvent[]> {
   const today = new Date();
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   const url = `${FINNHUB_URL}?from=${iso(new Date(today.getTime() - 86400000))}&to=${iso(new Date(today.getTime() + 14 * 86400000))}&token=${encodeURIComponent(env.FINNHUB_API_KEY || "")}`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Finnhub ${r.status}`);
+  const r = await fetchWithRetry(url);
+  if (!r.ok) {
+    const retryAfter = Number(r.headers.get("Retry-After") || "0") * 1000;
+    const info = classifyProviderFailure(r.status, `Finnhub ${r.status}`, retryAfter || undefined);
+    throw new Error(`${info.status}: ${info.message}`);
+  }
   const rows = ((await r.json()) as JsonRecord).economicCalendar as JsonRecord[] | undefined;
   const out: NewsEvent[] = [];
   for (const row of rows || []) {
@@ -119,19 +152,45 @@ export async function loadEvents(env: Env, force = false) {
   const ttl = Number(env.NEWS_CACHE_SECONDS || 900) * 1000;
   const now = Date.now();
   if (!force && cache.events.length && now - cache.ts < ttl) return { events: cache.events, source: cache.source, stale: false, error: null as string | null, fetched_at: cache.ts };
+
   let events: NewsEvent[] = [];
   let source: string | null = null;
+  let providerStatus: ProviderStatus | null = null;
   const errors: string[] = [];
+
   if (env.FINNHUB_API_KEY) {
-    try { events = await fetchFinnhub(env); source = "Finnhub"; } catch (e) { errors.push(String((e as Error).message).slice(0, 120)); }
+    try {
+      events = await fetchFinnhub(env);
+      source = "Finnhub";
+      providerStatus = "OK";
+    } catch (e) {
+      const message = String((e as Error).message || "");
+      const status = classifyProviderFailure(/\d{3}/.test(message) ? Number(message.match(/\d{3}/)?.[0]) : null, message);
+      providerStatus = status.status;
+      errors.push(message.slice(0, 160));
+    }
   }
+
   if (!events.length) {
-    try { events = await fetchForexFactory(); source = "Forex Factory"; } catch (e) { errors.push(String((e as Error).message).slice(0, 120)); }
+    try {
+      events = await fetchForexFactory();
+      source = "Forex Factory";
+      providerStatus = providerStatus ?? "OK";
+    } catch (e) {
+      const message = String((e as Error).message).slice(0, 160);
+      errors.push(message);
+    }
   }
+
   events = events.filter(relevant).sort((a, b) => a.ts_ms - b.ts_ms);
-  if (events.length) { cache = { ts: now, events, source, error: null }; return { events, source, stale: false, error: null as string | null, fetched_at: now }; }
+  if (events.length) {
+    cache = { ts: now, events, source, error: null };
+    return { events, source, stale: false, error: null as string | null, fetched_at: now, provider_status: providerStatus };
+  }
+
+  const stale = cache.events.length > 0;
   cache.error = errors.join("; ") || "no events";
-  return { events: cache.events, source: cache.source, stale: true, error: cache.error, fetched_at: cache.ts || null };
+  return { events: stale ? cache.events : [], source: stale ? cache.source : null, stale, error: cache.error, fetched_at: cache.ts || null, provider_status: providerStatus };
 }
 
 export function analyzeEvent(title: string, actual: unknown, forecast: unknown, previous: unknown, category?: string | null): NewsAnalysis {

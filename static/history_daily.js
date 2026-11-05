@@ -5,6 +5,7 @@
 
   window.resultCell = function (r) {
     const a = r.analysis || {}, o = a.outcome, t = a.ict_track || a.track || {};
+    const state = (t.state || '').toUpperCase();
     if (o && o.result) {
       const win = o.result === 'TP1' || o.result === 'TP2', rr = typeof o.r === 'number' && o.result !== 'SKIP' ? ` <span class="tiny">${o.r > 0 ? '+' : ''}${o.r}R</span>` : '';
       const when = o.at ? ` <span class="tiny">${hm(o.at)}${o.auto ? ' · auto' : ''}</span>` : '';
@@ -12,7 +13,8 @@
     }
     if (r.direction !== 'BUY' && r.direction !== 'SELL') return '<span class="tiny">—</span>';
     if (r.stop_loss == null) return '<span class="tiny">no levels</span>';
-    if (t.state === 'FILLED') return `<span class="badge">● RUNNING</span> <span class="tiny">since ${hm(t.filled_ms)}</span>${sym(r)}`;
+    if (state === 'ACTIVE' || state === 'FILLED') return `<span class="badge">● RUNNING</span> <span class="tiny">since ${hm(t.filled_ms || t.activated_ms || t.done_ms)}</span>${sym(r)}`;
+    if (state === 'TP1_HIT' || state === 'TP2_HIT' || state === 'SL_HIT') return `<span class="badge">${state === 'SL_HIT' ? '✖' : '✔'} ${state.replace('_HIT', ' HIT')}</span>${sym(r)}`;
     return `<span class="badge">◌ WAITING</span> <span class="tiny">auto-tracking</span>${sym(r)}`;
   };
 
